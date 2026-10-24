@@ -10,17 +10,20 @@ no build step) that runs in its own sandboxed Docker container and talks to
 Gladys through
 [`@gladysassistant/integration-sdk`](https://github.com/GladysAssistant/integration-sdk-js),
 its only runtime dependency. It started from the official JavaScript template.
+It reads and commands a TOLO steam generator or sauna through its App Box, on
+the local network, in UDP (port 51500).
 
 ## Commands
 
 ```bash
 npm install
 npm test                                  # node --test, the built-in runner
-node --test test/devices.test.js          # one file
-node --test --test-name-pattern "plug"    # tests whose name matches
+node --test test/app.test.js              # one file
+node --test --test-name-pattern "turn off"   # tests whose name matches
 npm run lint                              # ESLint
 npm run format:check                      # Prettier, as the CI runs it
 npm run format                            # Prettier, fix in place
+npm run cover                             # cover.png (plain Node)
 npx github:GladysAssistant/integration-store .   # store admission checks
 ```
 
@@ -32,12 +35,17 @@ pushing.
 
 ```
 index.js                          SDK wiring only: handlers registered before connect()
-src/devices/index.js              registry of the device blueprints + dispatch helpers
-src/devices/<type>.js             one device type per file (buildDevice, onPoll, onSetValue...)
-src/scenes.js                     scene action handlers (manifest `scene_actions`)
-src/widgets.js                    dashboard widget handlers (manifest `widgets`)
+src/handlers.js                   SDK handlers -> ToloApp (shared with the tests)
+src/app.js                        polling, device, states, status, commands and their guards
+src/devices.js                    device and states (pure); feature roles are frozen
+src/tolo/protocol.js              frames, requests, strict parsing (pure), port of tololib
+src/tolo/client.js                status, settings, sets: one exchange each
+src/tolo/udp.js                   the only network access: one UDP socket per exchange
+src/store.js                      /data/tolo-state.json: last read time, turn off guard
+src/publisher.js                  states to Gladys within 300 per minute
 src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
-src/weather.js                    example driver (Open-Meteo)
+src/i18n.js                       English and French runtime texts
+scripts/cover.mjs                 cover.png generator (plain Node, no dependency)
 gladys-assistant-integration.json manifest: name, config_schema, actions, image...
 docs/en.md, docs/fr.md            user documentation, re-hosted by Gladys (mandatory)
 test/                             node --test, against the SDK's fake Gladys (integration-sdk/testing)
@@ -46,31 +54,33 @@ test/                             node --test, against the SDK's fake Gladys (in
 
 ## Rules
 
-- **External ids are forever.** Build them with
-  `gladys.externalIds(type, platformId)`, `platformId` being the unique id the
-  platform gives the device (serial, cloud id, MAC), never a label. Gladys keys
-  devices, their history, scenes and dashboards on them: changing one creates a
-  new device and orphans the old one. The same goes for every key users store:
-  manifest `config_schema`, `actions`, widget and scene keys, feature keys.
-- **The container rootfs is read-only.** Write only under `/data`, the one
-  writable volume. Never log tokens, passwords or API keys.
+- **External ids are forever.** `gladys.externalIds('tolo', 'appbox')`: one
+  App Box per integration (the protocol has no serial number). Feature roles
+  (`src/constants.js` FEATURES) and manifest keys never change.
+- **The container rootfs is read-only.** Write only under `/data`.
 - **Versions belong to the Release workflow** (Actions → Release). Never edit
   `version` in `package.json` or in the manifest, nor the `docker_image` tag,
-  by hand — except on the README's hand-pushed tag path, which bumps all three
-  together before tagging. `test/manifest.test.js` checks they agree.
+  by hand. `test/manifest.test.js` checks they agree (never a pinned value).
 - **Changelog.** Every user-visible change adds a line under `## [Unreleased]`
-  in `CHANGELOG.md` (`### Added`, `Changed`, `Fixed`, `Removed`, `Security`).
-  Never write a version heading: the Release workflow moves the section, and it
-  becomes the notes of the GitHub Release.
-- **Manifest.** Texts are multi-language objects `{ "en": ..., "fr": ... }`:
-  `label`, `description` and `placeholder` alike, never a plain string. The
-  catalog `description` holds 10 to 100 characters per language. A field the
-  older cores do not know needs a higher `gladys_version` minimum
-  (`categories`: 4.86.0; `widgets`, `scene_triggers`, `scene_actions`,
-  `type: "provider"`: 5.1.0). `test/manifest.test.js` ties the manifest to the
-  code (defaults, action, scene and widget handlers): change both sides
-  together.
-- **User-facing text** is bilingual (English and French): action messages,
-  manifest texts, and `docs/en.md` / `docs/fr.md`, kept in sync.
+  in `CHANGELOG.md`. Never write a version heading.
+- **Manifest.** Texts are `{ "en": ..., "fr": ... }`; the catalog
+  `description` holds 10 to 100 characters per language.
+- **User-facing text** is bilingual and UTF-8 without BOM, without control
+  bytes (`test/encoding.test.js`).
 - **Style.** Prettier formats, ESLint catches mistakes. Comments explain why,
-  in English. Tests never touch the network.
+  in English. Tests never touch the network beyond the loopback.
+- **UDP.** One socket per exchange (never a shared socket: a late answer
+  would be taken for another request's); source address and port checked,
+  datagram size bounded, frame, command, value and length checked. Only the
+  commands of `COMMAND` are ever sent.
+- **TOLO.** Turning on and the setpoint stay behind `allow_heating` (off by
+  default): a button and a thermostat setpoint, never a switch; turning on
+  is decided on a fresh read, sets the timer (`session_minutes`, never "no
+  timer", 60 min at most) and caps the setpoint (`max_temperature`, 60 °C at
+  most) before it, both read back; the option, a turn off and the deadline
+  are checked again right before every datagram. Turning off is never held
+  back (option, command in flight, read, unreachable App Box, before the
+  first read), never preceded by a read, sent again when a turn on may land
+  after it, and reaffirmed by the reads of the next 2 min (guard in `/data`).
+  The App Box is never read sooner than the interval after the last read
+  (kept in `/data`).

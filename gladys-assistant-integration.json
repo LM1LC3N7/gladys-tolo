@@ -1,177 +1,169 @@
 {
   "manifest_version": 1,
   "type": "device",
-  "name": "Demo Devices Template",
+  "name": "TOLO",
   "description": {
-    "en": "Starter template showing sensors, a switch, a dimmable light and a smart plug.",
-    "fr": "Template de démarrage : capteurs, interrupteur, lampe variable et prise connectée."
+    "en": "TOLO steam generators and saunas (App Box) on the local network: temperature, humidity, on/off.",
+    "fr": "Générateurs de vapeur et saunas TOLO (App Box) en local : température, humidité, marche/arrêt."
   },
-  "version": "1.0.0",
-  "docker_image": "ghcr.io/gladysassistant/integration-template-js:1.0.0",
+  "version": "0.1.0",
+  "docker_image": "ghcr.io/lm1lc3n7/gladys-tolo:0.1.0",
   "gladys_version": ">=5.1.0",
-  "cover_image": "https://raw.githubusercontent.com/GladysAssistant/integration-template-js/master/cover.png",
-  "categories": ["lighting", "security", "environment"],
-  "transports": ["local", "cloud"],
+  "cover_image": "https://raw.githubusercontent.com/LM1LC3N7/gladys-tolo/main/cover.png",
+  "categories": ["appliances", "climate"],
+  "transports": ["local"],
   "config_schema": [
     {
       "key": "intro",
       "type": "section",
-      "label": { "en": "Getting started", "fr": "Pour commencer" },
+      "label": {
+        "en": "Your TOLO App Box",
+        "fr": "Votre App Box TOLO"
+      },
       "description": {
-        "en": "The demo weather station reads real data from the free Open-Meteo API: pick the coordinates to observe. No account, no API key.",
-        "fr": "La station météo de démonstration lit de vraies données via l'API gratuite Open-Meteo : choisissez les coordonnées à observer. Pas de compte, pas de clé d'API."
+        "en": "Shows a TOLO steam generator or sauna with its App Box in Gladys, on the local network (UDP port 51500, no account, no cloud): status, temperature, humidity, setpoint, time left, water level, lamp, fan. Turning off always works; heating from Gladys (turning on and the setpoint) is off until you allow it below. The App Box protocol is not published by TOLO: this integration follows the open-source tololib library. Give the App Box a fixed address in your router, enter it below, save, then add the device from the Discovery tab. A steam room or a sauna heats: never start it from afar without making sure nobody is inside. Never tested with a real device. Not affiliated with TOLO.",
+        "fr": "Affiche un générateur de vapeur ou un sauna TOLO avec son App Box dans Gladys, en réseau local (UDP, port 51500, sans compte ni cloud) : statut, température, humidité, consigne, temps restant, niveau d'eau, lampe, ventilateur. L'extinction fonctionne toujours ; le chauffage depuis Gladys (allumage et consigne) reste désactivé tant que vous ne l'autorisez pas ci-dessous. Le protocole de l'App Box n'est pas publié par TOLO : cette intégration suit la bibliothèque libre tololib. Donnez une adresse fixe à l'App Box dans votre box, saisissez-la ci-dessous, enregistrez, puis ajoutez l'appareil depuis l'onglet Découverte. Un hammam ou un sauna chauffe : ne le lancez jamais à distance sans vous assurer que personne n'est dedans. Jamais testé avec un vrai appareil. Sans lien avec TOLO."
       },
       "links": [
         {
-          "url": "https://open-meteo.com/en/docs",
-          "label": { "en": "Open-Meteo documentation", "fr": "Documentation Open-Meteo" }
+          "url": "https://github.com/LM1LC3N7/gladys-tolo/blob/main/docs/fr.md",
+          "label": {
+            "en": "Guide (French)",
+            "fr": "Guide (français)"
+          }
+        },
+        {
+          "url": "https://github.com/LM1LC3N7/gladys-tolo/blob/main/docs/en.md",
+          "label": {
+            "en": "Guide (English)",
+            "fr": "Guide (anglais)"
+          }
         }
       ]
     },
     {
-      "key": "latitude",
-      "type": "number",
-      "label": { "en": "Latitude", "fr": "Latitude" },
-      "description": {
-        "en": "Latitude used for the demo weather sensor.",
-        "fr": "Latitude utilisée par le capteur météo de démonstration."
+      "key": "host",
+      "type": "string",
+      "label": {
+        "en": "IP address of the App Box",
+        "fr": "Adresse IP de l'App Box"
       },
-      "placeholder": { "en": "e.g. 48.8566", "fr": "ex. 48.8566" },
-      "required": true,
-      "default": 48.8566,
-      "min": -90,
-      "max": 90
-    },
-    {
-      "key": "longitude",
-      "type": "number",
-      "label": { "en": "Longitude", "fr": "Longitude" },
       "description": {
-        "en": "Longitude used for the demo weather sensor.",
-        "fr": "Longitude utilisée par le capteur météo de démonstration."
+        "en": "An IPv4 address of your local network, such as 192.168.1.50 (shown in your router's list of devices). Give it a fixed lease: the protocol has no serial number, so Gladys trusts the App Box answering at this address.",
+        "fr": "Une adresse IPv4 de votre réseau local, comme 192.168.1.50 (visible dans la liste des appareils de votre box). Fixez-la dans la box : le protocole n'a pas de numéro de série, Gladys fait donc confiance à l'App Box qui répond à cette adresse."
       },
-      "placeholder": { "en": "e.g. 2.3522", "fr": "ex. 2.3522" },
+      "placeholder": {
+        "en": "192.168.1.50",
+        "fr": "192.168.1.50"
+      },
       "required": true,
-      "default": 2.3522,
-      "min": -180,
-      "max": 180
+      "default": ""
     },
     {
-      "key": "unit",
-      "type": "select",
-      "label": { "en": "Temperature unit", "fr": "Unité de température" },
-      "required": false,
-      "default": "celsius",
-      "options": [
-        { "value": "celsius", "label": { "en": "Celsius", "fr": "Celsius" } },
-        { "value": "fahrenheit", "label": { "en": "Fahrenheit", "fr": "Fahrenheit" } }
-      ]
-    },
-    {
-      "key": "poll_frequency",
-      "type": "number",
-      "label": { "en": "Refresh interval (s)", "fr": "Intervalle de rafraîchissement (s)" },
+      "key": "allow_heating",
+      "type": "boolean",
+      "label": {
+        "en": "Allow heating from Gladys",
+        "fr": "Autoriser le chauffage depuis Gladys"
+      },
       "description": {
-        "en": "How often sensors are polled, in seconds (one minute minimum).",
-        "fr": "Fréquence d'interrogation des capteurs, en secondes (une minute minimum)."
+        "en": "Off by default. On: the \"Turn on (heat)\" button and the setpoint may start or change heating; each turn on first sets the timer of the App Box to the session duration below. Off: they refuse every request. Turning off always works.",
+        "fr": "Désactivé par défaut. Activé : le bouton « Allumer (chauffer) » et la consigne peuvent lancer ou modifier la chauffe ; chaque allumage règle d'abord la minuterie de l'App Box sur la durée de séance ci-dessous. Désactivé : ils refusent toute demande. L'extinction fonctionne toujours."
       },
       "required": false,
-      "default": 300,
-      "min": 60,
+      "default": false
+    },
+    {
+      "key": "session_minutes",
+      "type": "number",
+      "label": {
+        "en": "Session duration (min)",
+        "fr": "Durée de séance (min)"
+      },
+      "description": {
+        "en": "The timer set on the App Box before every turn on from Gladys: it stops by itself after this time (30 min by default; 60 min, the limit of the App Box, at most). Never \"no timer\".",
+        "fr": "La minuterie réglée sur l'App Box avant chaque allumage depuis Gladys : elle s'arrête d'elle-même après cette durée (30 min par défaut ; 60 min, la limite de l'App Box, au plus). Jamais « sans minuterie »."
+      },
+      "required": false,
+      "default": 30,
+      "min": 1,
+      "max": 60
+    },
+    {
+      "key": "max_temperature",
+      "type": "number",
+      "label": {
+        "en": "Highest setpoint (°C)",
+        "fr": "Consigne la plus haute (°C)"
+      },
+      "description": {
+        "en": "Gladys never asks for more (50 °C by default; 35 to 60 °C, the range of the App Box). A setpoint above it on the App Box is lowered to it before a turn on from Gladys.",
+        "fr": "Gladys ne demande jamais plus (50 °C par défaut ; de 35 à 60 °C, la plage de l'App Box). Une consigne plus haute sur l'App Box est ramenée à cette valeur avant un allumage depuis Gladys."
+      },
+      "required": false,
+      "default": 50,
+      "min": 35,
+      "max": 60
+    },
+    {
+      "key": "poll_interval",
+      "type": "number",
+      "label": {
+        "en": "Refresh interval (s)",
+        "fr": "Intervalle de rafraîchissement (s)"
+      },
+      "description": {
+        "en": "How often the App Box is read, in seconds (never more often, even after a restart).",
+        "fr": "Fréquence de lecture de l'App Box, en secondes (jamais plus souvent, même après un redémarrage)."
+      },
+      "required": false,
+      "default": 30,
+      "min": 10,
       "max": 3600
+    },
+    {
+      "key": "language",
+      "type": "select",
+      "label": {
+        "en": "Language of the feature names",
+        "fr": "Langue des noms des fonctionnalités"
+      },
+      "description": {
+        "en": "Used for the feature names of the devices added from now on, for the status texts and for the command errors.",
+        "fr": "Sert aux noms des fonctionnalités des appareils ajoutés désormais, aux textes d'état et aux erreurs des commandes."
+      },
+      "required": false,
+      "default": "fr",
+      "options": [
+        {
+          "value": "fr",
+          "label": {
+            "en": "French",
+            "fr": "Français"
+          }
+        },
+        {
+          "value": "en",
+          "label": {
+            "en": "English",
+            "fr": "Anglais"
+          }
+        }
+      ]
     }
   ],
   "actions": [
     {
-      "key": "test_weather",
-      "label": { "en": "Test the weather provider", "fr": "Tester le fournisseur météo" },
+      "key": "test_connection",
+      "label": {
+        "en": "Test the connection",
+        "fr": "Tester la connexion"
+      },
+      "description": {
+        "en": "Reads the App Box once, unless it was read less than one interval ago (then shows that read).",
+        "fr": "Lit l'App Box une fois, sauf si elle a été lue il y a moins d'un intervalle (affiche alors cette lecture)."
+      },
       "timeout_seconds": 30
-    },
-    {
-      "key": "identify",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ]
-    }
-  ],
-  "scene_triggers": [
-    {
-      "key": "motion_detected",
-      "label": { "en": "Motion detected", "fr": "Mouvement détecté" },
-      "description": {
-        "en": "A demo motion sensor saw a person or an animal move.",
-        "fr": "Un détecteur de démonstration a vu bouger une personne ou un animal."
-      },
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Sensor", "fr": "Détecteur" }
-        },
-        {
-          "key": "target",
-          "type": "multi_select",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" },
-          "options": [
-            { "value": "person", "label": { "en": "Person", "fr": "Personne" } },
-            { "value": "animal", "label": { "en": "Animal", "fr": "Animal" } }
-          ]
-        }
-      ],
-      "variables": [
-        {
-          "key": "target",
-          "type": "string",
-          "label": { "en": "What moved", "fr": "Ce qui a bougé" }
-        }
-      ]
-    }
-  ],
-  "scene_actions": [
-    {
-      "key": "identify_device",
-      "label": { "en": "Identify a device", "fr": "Identifier un appareil" },
-      "description": {
-        "en": "Make a device signal itself (the demo light blinks).",
-        "fr": "Fait se signaler un appareil (la lampe de démonstration clignote)."
-      },
-      "timeout_seconds": 15,
-      "fields": [
-        {
-          "key": "device",
-          "type": "select",
-          "source": "devices",
-          "label": { "en": "Device", "fr": "Appareil" },
-          "required": true
-        }
-      ],
-      "outputs": [
-        {
-          "key": "signalled",
-          "type": "boolean",
-          "label": { "en": "Device signalled", "fr": "Appareil signalé" }
-        }
-      ]
-    }
-  ],
-  "widgets": [
-    {
-      "key": "demo_status",
-      "label": { "en": "Demo status", "fr": "État de la démo" },
-      "description": {
-        "en": "Live temperature and plug power, plug connection and observed location.",
-        "fr": "Température et puissance en direct, connexion de la prise, position observée."
-      },
-      "icon": "activity",
-      "action_timeout_seconds": 15
     }
   ]
 }

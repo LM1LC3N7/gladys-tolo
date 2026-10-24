@@ -7,7 +7,7 @@ cloud. **Never tested with a real device.** Not affiliated with TOLO.
 > **Safety.** A steam room or a sauna heats. Never start heating from afar
 > without making sure nobody is inside. Turning on from Gladys is **off by
 > default**; turning off is held back by no option and no command in
-> progress.
+> progress (it may still fail if the App Box is unreachable).
 
 ## What you get
 
@@ -18,7 +18,7 @@ One device in the Discovery tab, with:
 - measured **temperature** and **humidity**, the **setpoint**;
 - **time left** (minutes) on the timer;
 - **water level** (0, 33, 66 or 100 %) and **tank temperature**;
-- **lamp** (on/off) and **fan** (on/off): they heat nothing;
+- **lamp** (on/off) and **fan** (on/off);
 - two buttons: **Turn on (heat)** and **Turn off**.
 
 Heating has no switch: an "everything on" from Google Home, Alexa, HomeKit,
@@ -38,10 +38,10 @@ MCP or a scene cannot start it. It may turn the lamp or the fan on.
    of the App Box) and the **highest setpoint** (50 °C by default, 35 to
    60 °C, the range of the App Box).
 
-The App Box is read every 30 s (10 s to 1 h), never more often, even after a
-restart of the integration, a reconnection to Gladys, the "Test the
-connection" button or a Discovery scan. After a command, two follow-up reads
-go 5 s and 20 s later.
+The App Box is read every 30 s (10 s to 1 h). The periodic reads are never
+closer than the interval, even after a restart of the integration, a reconnection to Gladys, the "Test the
+connection" button or a Discovery scan. A command adds its own reads (fresh
+read, read back), then two follow-up reads 5 s and 20 s later.
 
 The protocol gives no serial number nor MAC address: the device is "the App
 Box answering at the configured address". Changing the address keeps the
@@ -51,28 +51,41 @@ same device in Gladys.
 
 ### Turn off
 
-It is held back neither by the option, nor by a command in progress, nor by
-a read in progress, nor by an App Box that stopped answering, and it also
-goes right after a restart, before the first read. It is always sent (never
-"already off") and, while the App Box stays silent, sent again up to 4 times
-(400 ms apart). It cancels a turn on that has not left yet; if a turn on had
-already left, it is sent again when that turn on settles.
+Any value received presses it (0, 1, true…). Turning off is held back
+neither by the heating option, nor by a command in progress, nor by a read
+in progress, nor by an App Box that stopped answering. Right after a
+restart, before the configuration is read again, it goes to the address
+cached by Gladys (or the one of a guard kept in `/data`). It is sent with no
+read before it (never "already off"): **4 datagrams at most**, 400 ms apart,
+while the App Box stays silent or a network error (closed port, unreachable
+host) ends an attempt; each attempt goes from a fresh socket. It cancels a
+turn on that has not left yet; if a turn on had already left, it is sent
+again when that turn on settles.
 
-It is confirmed only by a read showing the App Box off. Otherwise: "Sent,
-without confirmation", and for 2 minutes every read that sees the App Box on
-sends the turn off again (3 times at most). This guard is kept in `/data`
-and survives a restart. It may also turn off heating started from the App
-Box or the TOLO app within those 2 minutes: on purpose. During the guard, a
-turn on from Gladys is refused.
+It is confirmed only by a read showing the App Box off (also after an answer
+saying "refused": the state read is what counts). Possible answers:
 
-It fails ("Not sent") only when no datagram could leave (for instance the
-network is unreachable from the container), or when no valid address is
-configured.
+- success: read off;
+- "Sent, without confirmation": no answer, no read back, or read still on;
+- "The App Box answered with a refusal, but reads: …": refused and read
+  still on;
+- "Not sent": no datagram could leave;
+- "No App Box address configured": no address known.
+
+Without confirmation, a guard of 2 minutes is set (kept in `/data`, it
+survives a restart: a read then goes 5 s after the start, whatever the
+interval). During the guard, a periodic or follow-up read that sees the App
+Box on sends the turn off again (3 times at most); the read back of a
+command, and reads made while a turn off or a turn on is in flight, send
+nothing. It may also turn off heating started from the App Box or the TOLO
+app within those 2 minutes: on purpose. During the guard, a turn on from
+Gladys is refused and only a lower setpoint is accepted.
 
 ### Turn on (heat)
 
-It is refused, nothing sent, in these cases:
+It takes exactly 1. Refused, no power on sent, in these cases:
 
+- a value other than 1, or no address configured;
 - "Allow heating from Gladys" is off (checked on arrival, after the read,
   then right before every datagram);
 - a turn off is in flight, not confirmed yet (its guard), or asked during
@@ -81,38 +94,61 @@ It is refused, nothing sent, in these cases:
   (2 minutes at most);
 - the App Box does not answer the fresh read (status and settings) within
   1.5 s, or its power state is unreadable;
-- the timer or the setpoint could not be set and read back;
+- the timer or the setpoint could not be set and read back (it may have
+  been written: that heats nothing);
 - the configuration (address) changed meanwhile;
-- the turn on cannot leave within 3.5 s of the click.
+- the power on cannot leave within 3.5 s of the click.
 
 Steps: a fresh read of the status and the settings (never the state in
 memory); already on: nothing sent; otherwise the **timer** of the App Box is
 set to the session duration (never "no timer") and a setpoint above the
-highest one is **lowered** to it, both read back; only then does the turn on
-leave. It is confirmed only by a read showing the App Box on; otherwise
-"Sent, without confirmation". A read of less than 10 s showing the App Box
-already on is enough to send nothing (a scene pressing in a loop does not
-query the App Box each time).
+highest one is **lowered** to it, both read back; only then does the power
+on leave. A read of less than 10 s showing the App Box already on is enough
+to send nothing.
 
-The bounded timer covers sessions started from Gladys: if someone then
-removes the timer on the App Box, the integration does not set it back.
+Answers after the power on (always followed by a read):
+
+- success: read on, with a timer of 1 minute to the session duration;
+- "Turned on, timer not confirmed": read on without that timer. The
+  integration then writes the timer again in the background and reads; if
+  it is still missing, it **turns the App Box off**, logs it and says it in
+  the status;
+- "Turned on, but a turn off was asked after it had left": the turn off is
+  sent again;
+- "The App Box answered with a refusal, but reads: …" or "The App Box
+  refused the command": depending on the state read;
+- "Sent, without confirmation": no answer, no read back, or read off.
+
+**Timer (not checked on a real device).** According to tololib, the App Box
+stops by itself at the end of its timer. During every session started from
+Gladys (its duration plus 2 minutes), each read checks that a timer of at
+most the session duration runs; otherwise the timer is written again, then
+the App Box is turned off if it is still missing. A session started
+elsewhere (App Box, TOLO app) is not watched.
 
 ### Setpoint
 
 Refused when the option is off, when the value is not a whole number from
-35 °C to the highest setpoint (checked again right before the datagram), or
-when another setpoint is in progress. Changing the setpoint does not turn
-the App Box on. Confirmed by a read of the settings.
+35 °C to the highest setpoint (checked again right before the datagram),
+when another setpoint is in progress, when the configuration changed
+meanwhile, when it cannot leave within 3.5 s, or, while a turn off is in
+flight or not confirmed, when it is not lower than the setpoint known.
+According to tololib, changing the setpoint does not turn the App Box on.
+Confirmed by a read of the settings.
 
 ### Lamp and fan
 
 Plain on/off (0 or 1), one command at a time each, confirmed by a read.
+According to tololib, the lamp and the fan only drive their output (not
+checked on a real App Box); should a lamp or fan command turn the App Box
+on (read off right before, on right after), the integration turns it off at
+once and refuses the command.
 
 ## Troubleshooting
 
 - **The App Box does not answer**: the status says so, the device is shown
   unreachable, next try after 30 s, 1, 2 then 5 min (never faster than the
-  interval). Turning off is still sent.
+  interval). A turn off is still sent.
 - Only answers from **the address and port of the App Box**, well formed
   (prefix, suffix, checksum, length) and of the command sent are taken;
   every exchange has its own socket, so a late answer of an earlier exchange

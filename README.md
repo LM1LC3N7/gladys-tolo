@@ -31,13 +31,15 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (ToloApp)
   Box: a late answer of an earlier exchange reaches a closed socket. Source
   address and port checked again, datagram size bounded (64 bytes), prefix,
   suffix, checksum, command, value and length checked; anything else is
-  ignored and counted. Silent: sent again (reads 3 × 1 s; commands 2 × 400
-  ms; turn off 4 × 400 ms).
+  ignored and counted. A set answer must echo the value sent. Silent, or a
+  socket error (ICMP): sent again from a fresh socket (reads 3 × 1 s;
+  commands 2 × 400 ms; turn off 4 × 400 ms).
 - **Identity**: one device, `tolo:appbox` (frozen): the protocol has no serial
   number nor MAC. The address is a unicast IPv4 address typed by the user
   (no broadcast, multicast, loopback, link-local nor .255).
-- **Reads**: every 30 s (10 s – 1 h), never sooner than the interval after
-  the last one (time kept in `/data`, written before the read, at most once a
+- **Reads**: every 30 s (10 s – 1 h); periodic reads never sooner than the
+  interval after the last one (a command adds its own reads; a turn off
+  guard restored from `/data` gets one read 5 s after the start) (time kept in `/data`, written before the read, at most once a
   minute). Failures retried after 30 s, 1, 2, 5 min. A read begun before a
   command left, or for an old configuration, is not applied.
 - **Commands**: heating has no switch. "Turn off" (a button) is never held
@@ -51,8 +53,13 @@ Gladys ⇄ SDK ⇄ src/handlers.js ⇄ src/app.js (ToloApp)
   (never "no timer") and lowers a setpoint above `max_temperature`, both read
   back, leaves within 3.5 s or is refused unsent, one at a time, confirmed
   only by a read showing the power on; else "sent, without confirmation".
-  Lamp (`light/binary`) and fan (`switch/binary`) heat nothing: plain sets,
-  confirmed by a read.
+  A turn on is confirmed only when the read shows a timer of at most the
+  session duration; a session from Gladys found without it (then, or later)
+  gets the timer again, then is turned off. Any answer, "refused" included,
+  is judged on a read. Lamp (`light/binary`) and fan (`switch/binary`):
+  plain sets, confirmed by a read; according to tololib they only drive
+  their output, and should one turn the App Box on, it is turned off at
+  once.
 
 ## Development
 

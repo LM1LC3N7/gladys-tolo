@@ -44,7 +44,13 @@ export class ToloClient {
    */
   set(host, command, value, options) {
     const { request, code } = SETS[command](value);
-    return this.call(host, request, (message) => parseSetAnswer(message, code), options);
+    // The value byte of the request (index 3) must come back as the echo.
+    return this.call(
+      host,
+      request,
+      (message) => parseSetAnswer(message, code, request[3]),
+      options,
+    );
   }
 }
 

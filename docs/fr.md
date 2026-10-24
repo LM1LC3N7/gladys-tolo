@@ -7,7 +7,8 @@ cloud. **Jamais testé avec un vrai appareil.** Sans lien avec TOLO.
 > **Sécurité.** Un hammam ou un sauna chauffe. Ne lancez jamais la chauffe à
 > distance sans vous assurer que personne n'est dedans. L'allumage depuis
 > Gladys est **désactivé par défaut** ; l'extinction n'est retenue par aucune
-> option ni commande en cours.
+> option ni commande en cours (elle peut quand même échouer si l'App Box est
+> injoignable).
 
 ## Ce que vous obtenez
 
@@ -19,8 +20,7 @@ Un appareil dans l'onglet Découverte, avec :
 - **température** et **humidité** mesurées, **consigne** ;
 - **temps restant** (minutes) de la minuterie ;
 - **niveau d'eau** (0, 33, 66 ou 100 %) et **température du réservoir** ;
-- **lampe** (marche/arrêt) et **ventilateur** (marche/arrêt) : ils ne
-  chauffent rien ;
+- **lampe** (marche/arrêt) et **ventilateur** (marche/arrêt) ;
 - deux boutons : **Allumer (chauffer)** et **Éteindre**.
 
 La chauffe n'a pas d'interrupteur : un « tout allumer » de Google Home,
@@ -41,10 +41,11 @@ lampe ou le ventilateur.
    défaut, de 1 à 60 min, la limite de l'App Box) et la **consigne la plus
    haute** (50 °C par défaut, de 35 à 60 °C, la plage de l'App Box).
 
-L'App Box est lue toutes les 30 s (réglable de 10 s à 1 h), jamais plus
-souvent, même après un redémarrage de l'intégration, une reconnexion à
-Gladys, le bouton « Tester la connexion » ou un scan de la Découverte. Après
-une commande, deux lectures de suivi partent 5 s et 20 s plus tard.
+L'App Box est lue toutes les 30 s (réglable de 10 s à 1 h). Les lectures
+périodiques ne sont jamais plus rapprochées que l'intervalle, même après un redémarrage de l'intégration, une reconnexion à
+Gladys, le bouton « Tester la connexion » ou un scan de la Découverte. Une
+commande ajoute ses propres lectures (lecture fraîche, relecture), puis deux
+lectures de suivi 5 s et 20 s plus tard.
 
 Le protocole ne donne ni numéro de série ni adresse MAC : l'appareil est
 « l'App Box qui répond à l'adresse configurée ». Changer d'adresse garde le
@@ -54,30 +55,46 @@ même appareil dans Gladys.
 
 ### Éteindre
 
-Elle n'est retenue ni par l'option, ni par une commande en cours, ni par une
-lecture en cours, ni par une App Box qui ne répond plus, et elle part aussi
-juste après un redémarrage, avant la première lecture. Elle est toujours
-envoyée (jamais « déjà éteint ») et, tant que l'App Box se tait, renvoyée
-jusqu'à 4 fois (400 ms d'écart). Elle annule un allumage qui n'est pas encore
-parti ; si un allumage était déjà parti, elle est renvoyée quand il se
-termine.
+N'importe quelle valeur reçue vaut appui (0, 1, vrai…). L'extinction n'est
+retenue ni par l'option de chauffage, ni par une commande en cours, ni par
+une lecture en cours, ni par une App Box qui ne répond plus. Juste après un
+redémarrage, avant que la configuration soit relue, elle part vers l'adresse
+gardée par Gladys (ou celle d'une garde gardée dans `/data`). Elle est
+envoyée sans lecture préalable (jamais « déjà éteint ») : **4 paquets au
+plus**, 400 ms d'écart, tant que l'App Box se tait ou qu'une erreur réseau
+(port fermé, hôte injoignable) arrête une tentative ; chaque tentative part
+d'une socket neuve. Elle annule un allumage qui n'est pas encore parti ; si
+un allumage était déjà parti, elle est renvoyée quand il se termine.
 
-Elle n'est confirmée que par une relecture qui montre l'App Box éteinte.
-Sinon : « Envoyée, sans confirmation », et pendant 2 minutes chaque lecture
-qui voit l'App Box en marche renvoie l'extinction (3 fois au plus). Cette
-garde est gardée dans `/data` et survit à un redémarrage. Elle peut aussi
-éteindre une chauffe lancée depuis l'App Box ou l'application TOLO dans ces
-2 minutes : c'est voulu. Pendant la garde, un allumage depuis Gladys est
-refusé.
+Elle est confirmée seulement par une relecture qui montre l'App Box éteinte
+(même si l'App Box a répondu par un refus : c'est l'état relu qui compte).
+Réponses possibles :
 
-Elle échoue (« Non envoyée ») seulement si aucun paquet n'a pu partir (par
-exemple réseau injoignable depuis le conteneur), ou si aucune adresse valide
-n'est configurée.
+- succès : relue éteinte ;
+- « Envoyée, sans confirmation » : pas de réponse, pas de relecture, ou
+  relue encore en marche ;
+- « L'App Box a répondu par un refus, mais indique : … » : refus et relue
+  encore en marche ;
+- « Non envoyée » : aucun paquet n'a pu partir ;
+- « Aucune adresse d'App Box configurée » : aucune adresse connue.
+
+Sans confirmation, une garde de 2 minutes est posée (gardée dans `/data`,
+elle survit à un redémarrage : une lecture part alors 5 s après le
+démarrage, quel que soit l'intervalle). Pendant la garde, une lecture
+périodique ou de suivi qui voit l'App Box en marche renvoie l'extinction
+(3 fois au plus) ; les relectures faites par une commande, et les lectures
+faites pendant une extinction ou un allumage en cours, ne renvoient rien.
+Cela peut aussi éteindre une chauffe lancée depuis l'App Box ou
+l'application TOLO dans ces 2 minutes : c'est voulu. Pendant la garde, un
+allumage depuis Gladys est refusé et seule une baisse de consigne est
+acceptée.
 
 ### Allumer (chauffer)
 
-Il est refusé, sans rien envoyer, dans ces cas :
+Il faut envoyer exactement 1. Refusé, sans mise en marche envoyée, dans ces
+cas :
 
+- valeur autre que 1, ou aucune adresse configurée ;
 - « Autoriser le chauffage depuis Gladys » est désactivé (vérifié à
   l'arrivée, après la lecture, puis juste avant chaque paquet) ;
 - une extinction est en cours, n'est pas encore confirmée (sa garde), ou est
@@ -85,8 +102,9 @@ Il est refusé, sans rien envoyer, dans ces cas :
 - un autre allumage est en cours, ou le précédent n'est pas encore confirmé
   (2 minutes au plus) ;
 - l'App Box ne répond pas à la lecture fraîche (état et réglages) en 1,5 s,
-  ou l'état de marche y est illisible ;
-- la minuterie ou la consigne n'a pas pu être réglée puis relue ;
+  ou son état de marche y est illisible ;
+- la minuterie ou la consigne n'a pas pu être réglée puis relue (elle a pu
+  être écrite : cela ne chauffe pas) ;
 - la configuration (adresse) a changé entre-temps ;
 - l'allumage ne peut pas partir dans les 3,5 s après le clic.
 
@@ -94,33 +112,56 @@ Déroulé : lecture fraîche de l'état et des réglages (jamais l'état en
 mémoire) ; déjà en marche : rien n'est envoyé ; sinon la **minuterie** de
 l'App Box est réglée sur la durée de séance (jamais « sans minuterie ») et
 une consigne au-dessus de la consigne la plus haute est **ramenée** à
-celle-ci, puis relues ; ensuite seulement l'allumage part. Il n'est confirmé
-que par une relecture qui montre l'App Box en marche ; sinon « Envoyée, sans
-confirmation ». Une relecture de moins de 10 s qui montre l'App Box déjà en
-marche suffit pour ne rien envoyer (une scène qui appuie en boucle ne
-sollicite pas l'App Box à chaque fois).
+celle-ci, puis relues ; ensuite seulement la mise en marche part. Une
+relecture de moins de 10 s qui montre l'App Box déjà en marche suffit pour
+ne rien envoyer.
 
-La minuterie bornée vaut pour les séances lancées depuis Gladys : si
-quelqu'un retire ensuite la minuterie depuis l'App Box, l'intégration ne la
-remet pas.
+Réponses après la mise en marche (toujours suivie d'une relecture) :
+
+- succès : relue en marche, avec une minuterie de 1 minute à la durée de
+  séance ;
+- « Allumée, minuterie non confirmée » : relue en marche sans cette
+  minuterie. L'intégration réécrit alors la minuterie en arrière-plan et
+  relit ; si elle manque toujours, elle **éteint** l'App Box, le journalise
+  et l'indique dans le statut ;
+- « Allumage parti avant l'extinction demandée ensuite » : une extinction
+  est arrivée pendant l'allumage ; elle est renvoyée ;
+- « L'App Box a répondu par un refus, mais indique : … » ou « L'App Box a
+  refusé la commande » : selon l'état relu ;
+- « Envoyée, sans confirmation » : pas de réponse, pas de relecture, ou
+  relue éteinte.
+
+**Minuterie (non vérifié sur un vrai appareil).** D'après tololib, l'App Box
+s'arrête d'elle-même à la fin de sa minuterie. Pendant toute séance lancée
+depuis Gladys (sa durée plus 2 minutes), chaque lecture vérifie qu'une
+minuterie d'au plus la durée de séance tourne ; sinon la minuterie est
+réécrite, puis l'App Box est éteinte si elle manque toujours. Une séance
+lancée ailleurs (App Box, application TOLO) n'est pas surveillée.
 
 ### Consigne
 
 Refusée si l'option est désactivée, si la valeur n'est pas un nombre entier
-de 35 °C à la consigne la plus haute (revérifié juste avant le paquet), ou
-si une autre consigne est en cours. Changer la consigne n'allume pas l'App
-Box. Confirmée par une relecture des réglages.
+de 35 °C à la consigne la plus haute (revérifié juste avant le paquet), si
+une autre consigne est en cours, si la configuration a changé entre-temps,
+si elle ne peut pas partir dans les 3,5 s, ou, pendant une extinction en
+cours ou non confirmée, si elle n'est pas plus basse que la consigne connue.
+D'après tololib, changer la consigne n'allume pas l'App Box. Confirmée par
+une relecture des réglages.
 
 ### Lampe et ventilateur
 
 Marche/arrêt simples (0 ou 1), une commande à la fois pour chacun,
-confirmés par une relecture.
+confirmés par une relecture. D'après tololib, la lampe et le ventilateur ne
+commandent que leur sortie (non vérifié sur une vraie App Box) ; si une
+commande lampe ou ventilateur met l'App Box en marche (relue éteinte juste
+avant, en marche juste après), l'intégration l'éteint aussitôt et refuse la
+commande.
 
 ## Quand ça ne va pas
 
 - **L'App Box ne répond pas** : le statut le dit, l'appareil est montré
   injoignable, nouvel essai après 30 s, 1, 2 puis 5 min (jamais plus vite
-  que l'intervalle). L'extinction est quand même envoyée.
+  que l'intervalle). Une extinction part quand même.
 - Seules les réponses venant de **l'adresse et du port de l'App Box**, bien
   formées (préfixe, suffixe, somme de contrôle, longueur) et de la commande
   envoyée sont prises en compte ; chaque échange a sa propre socket, donc la

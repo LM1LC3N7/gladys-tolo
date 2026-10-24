@@ -94,9 +94,9 @@ test('the status: every field, timers, unknown values left undefined', () => {
   assert.equal(o.humidity, undefined);
 });
 
-test('the status is refused with another command, value or length', () => {
+test('the status is refused with another command or length; any value byte (as tololib)', () => {
   assert.equal(parseStatus(decode(frame(COMMAND.GET_SETTINGS, 0x11, STATUS))), undefined);
-  assert.equal(parseStatus(decode(frame(COMMAND.GET_STATUS, 0x10, STATUS))), undefined);
+  assert.equal(parseStatus(decode(frame(COMMAND.GET_STATUS, 0x00, STATUS))).temperature, 47);
   assert.equal(parseStatus(decode(frame(COMMAND.GET_STATUS, 0x11, STATUS.slice(1)))), undefined);
   assert.equal(parseStatus(decode(frame(COMMAND.GET_STATUS, 0x11, [...STATUS, 0]))), undefined);
   assert.equal(parseStatus(undefined), undefined);
@@ -120,10 +120,15 @@ test('the settings: setpoint within the App Box range, timer, 7 or 8 bytes', () 
   );
 });
 
-test('a set answer: only of the same command; 00 accepted, anything else refused', () => {
+test('a set answer: same command and value echoed; 00 accepted, anything else refused', () => {
   const code = COMMAND.SET_POWER_ON;
-  assert.equal(parseSetAnswer(decode(frame(code, 0, [0])), code), true);
-  assert.equal(parseSetAnswer(decode(frame(code, 0, [1])), code), false);
-  assert.equal(parseSetAnswer(decode(frame(code, 0, [0, 0])), code), false);
-  assert.equal(parseSetAnswer(decode(frame(COMMAND.SET_LAMP_ON, 0, [0])), code), undefined);
+  assert.equal(parseSetAnswer(decode(frame(code, 0, [0])), code, 0), true);
+  assert.equal(parseSetAnswer(decode(frame(code, 0, [1])), code, 0), false);
+  assert.equal(parseSetAnswer(decode(frame(code, 0, [0, 0])), code, 0), false);
+  assert.equal(parseSetAnswer(decode(frame(COMMAND.SET_LAMP_ON, 0, [0])), code, 0), undefined);
+  assert.equal(
+    parseSetAnswer(decode(frame(code, 1, [0])), code, 0),
+    undefined,
+    'the answer of a turn on never answers a turn off',
+  );
 });

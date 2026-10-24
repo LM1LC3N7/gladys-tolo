@@ -2,16 +2,23 @@
 // One exchange with the App Box over UDP: a request, sent again after each
 // silent attempt (UDP may lose it), until an answer is accepted.
 //
-// Every exchange has its OWN socket (a new source port), connected to the
-// App Box address and port, and closed at its end. So an answer can only
-// belong to the request of its socket: a late answer of an earlier exchange
-// (a read, or a command already settled) reaches a closed socket and is lost,
-// never taken for the answer of another request. On top of the filter of the
-// connected socket (the kernel drops datagrams from any other address or
-// port), the source address and port of every datagram are checked again
-// here, its size is bounded, and it must be a well-formed message that the
-// caller accepts (same command, expected shape); anything else is ignored
-// and counted. The keep-alive byte is ignored.
+// Every attempt of an exchange has its OWN socket (a new source port),
+// connected to the App Box address and port; all the sockets of the exchange
+// are closed at its end. So an answer can only belong to the request of its
+// exchange: a late answer of an earlier exchange (a read, or a command
+// already settled) reaches a closed socket and is lost, never taken for the
+// answer of another request. On top of the filter of the connected socket
+// (the kernel drops datagrams from any other address or port), the source
+// address and port of every datagram are checked again here, its size is
+// bounded, and it must be a well-formed message that the caller accepts
+// (same command, expected shape); anything else is ignored and counted. The
+// keep-alive byte is ignored.
+//
+// A socket error (an ICMP "port unreachable" seen as ECONNREFUSED on a
+// connected socket, EHOSTUNREACH after a failed ARP, a failed send) only
+// ends THAT attempt: it counts as a silent one, its socket is closed, and the
+// next attempt goes on a fresh socket after the usual wait. An App Box that
+// restarts its UDP service for a few seconds still gets every resend.
 //
 // `beforeSend(attempt)` runs right before EVERY datagram, the resends
 // included: it may throw to stop the exchange (a heating command checks its
@@ -23,7 +30,7 @@ import dgram from 'node:dgram';
 import { MAX_DATAGRAM, decode, isKeepAlive } from './protocol.js';
 
 export const ERROR_KINDS = {
-  /** No datagram left (socket error, or the deadline before the first one). */
+  /** No datagram left (socket errors only, or the deadline before the first one). */
   NOT_SENT: 'not-sent',
   /** At least one datagram left, no accepted answer. */
   NO_ANSWER: 'no-answer',
@@ -37,6 +44,7 @@ export class ToloError extends Error {
     this.sent = sent;
     /** Datagrams received and ignored (other source, malformed, not the answer). */
     this.ignored = ignored;
+    /** The last socket error code, if any. */
     this.code = code;
   }
 }
@@ -73,12 +81,22 @@ function exchange(
   },
 ) {
   return new Promise((resolve, reject) => {
-    let socket;
+    const sockets = new Set();
     let sent = 0;
     let ignored = 0;
     let attempt = 0;
     let timer;
     let done = false;
+    let lastCode;
+
+    const closeSocket = (socket) => {
+      sockets.delete(socket);
+      try {
+        socket.close();
+      } catch {
+        // Already closed.
+      }
+    };
 
     const finish = (err, result) => {
       if (done) {
@@ -86,10 +104,8 @@ function exchange(
       }
       done = true;
       clearTimeout(timer);
-      try {
-        socket?.close();
-      } catch {
-        // Already closed.
+      for (const socket of [...sockets]) {
+        closeSocket(socket);
       }
       if (err) {
         if (!(err instanceof ToloError) && err.kind === undefined) {
@@ -102,55 +118,28 @@ function exchange(
       }
     };
 
-    const fail = (message, code) => {
+    const fail = (message) => {
       const kind = sent > 0 ? ERROR_KINDS.NO_ANSWER : ERROR_KINDS.NOT_SENT;
-      finish(new ToloError(kind, message, { sent, ignored, code }));
+      finish(new ToloError(kind, message, { sent, ignored, code: lastCode }));
     };
 
-    const next = () => {
-      if (done) {
-        return;
+    const failMessage = (suffix = '') => {
+      if (ignored > 0) {
+        return `no valid answer${suffix} (${ignored} ignored)`;
       }
-      if (attempt >= attempts) {
-        fail(ignored > 0 ? `no valid answer (${ignored} ignored)` : 'no answer');
-        return;
+      if (lastCode) {
+        return `no answer${suffix} (${lastCode})`;
       }
-      if (now() > sendBy) {
-        fail(sent > 0 ? 'no answer in time' : 'too late to send');
-        return;
-      }
-      attempt += 1;
-      try {
-        beforeSend(attempt);
-      } catch (err) {
-        finish(err);
-        return;
-      }
-      // Counted before the write: once send() is called, the datagram may leave.
-      sent += 1;
-      socket.send(request, (err) => {
-        if (err) {
-          fail(`send failed (${err.code ?? 'error'})`, err.code);
-        }
-      });
-      const wait = Math.max(0, Math.min(attemptTimeout, answerBy - now()));
-      timer = setTimeout(() => {
-        if (now() >= answerBy) {
-          fail(ignored > 0 ? `no valid answer in time (${ignored} ignored)` : 'no answer in time');
-          return;
-        }
-        next();
-      }, wait);
+      return `no answer${suffix}`;
     };
 
-    try {
-      socket = createSocket();
-    } catch (err) {
-      fail(`socket (${err.code ?? 'error'})`, err.code);
-      return;
-    }
-    socket.on('error', (err) => fail(`socket (${err.code ?? 'error'})`, err.code));
-    socket.on('message', (data, rinfo) => {
+    /** A socket error: this attempt is silent, the next one goes on a fresh socket. */
+    const socketError = (socket, err) => {
+      lastCode = err?.code ?? 'error';
+      closeSocket(socket);
+    };
+
+    const onMessage = (data, rinfo) => {
       if (done) {
         return;
       }
@@ -168,17 +157,74 @@ function exchange(
         return;
       }
       finish(undefined, result);
-    });
-    try {
-      socket.connect(port, host, (err) => {
+    };
+
+    /** Sends the datagram of this attempt on its connected socket. */
+    const send = (socket) => {
+      if (done || !sockets.has(socket)) {
+        return;
+      }
+      if (now() > sendBy) {
+        // Too late for this attempt: nothing more leaves, the wait goes on.
+        return;
+      }
+      try {
+        beforeSend(attempt);
+      } catch (err) {
+        finish(err);
+        return;
+      }
+      // Counted before the write: once send() is called, the datagram may leave.
+      sent += 1;
+      socket.send(request, (err) => {
         if (err) {
-          fail(`connect (${err.code ?? 'error'})`, err.code);
+          socketError(socket, err);
+        }
+      });
+    };
+
+    const next = () => {
+      if (done) {
+        return;
+      }
+      if (attempt >= attempts) {
+        fail(failMessage());
+        return;
+      }
+      if (now() > sendBy) {
+        fail(sent > 0 ? failMessage(' in time') : 'too late to send');
+        return;
+      }
+      attempt += 1;
+      let socket;
+      try {
+        socket = createSocket();
+        sockets.add(socket);
+        socket.on('error', (err) => socketError(socket, err));
+        socket.on('message', onMessage);
+        socket.connect(port, host, (err) => {
+          if (err) {
+            socketError(socket, err);
+            return;
+          }
+          send(socket);
+        });
+      } catch (err) {
+        lastCode = err?.code ?? 'error';
+        if (socket) {
+          closeSocket(socket);
+        }
+      }
+      const wait = Math.max(0, Math.min(attemptTimeout, answerBy - now()));
+      timer = setTimeout(() => {
+        if (now() >= answerBy) {
+          fail(failMessage(' in time'));
           return;
         }
         next();
-      });
-    } catch (err) {
-      fail(`connect (${err.code ?? 'error'})`, err.code);
-    }
+      }, wait);
+    };
+
+    next();
   });
 }

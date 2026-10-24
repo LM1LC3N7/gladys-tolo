@@ -7,15 +7,17 @@
 // One UDP datagram per message, to port 51500 of the App Box, each answered
 // by one datagram of the same shape:
 //   AA AA | command code (1 byte) | command value (1 byte) | extra (n bytes) | 55 55 | XOR of all before
-// Requests carry the extra byte FF. A "set" is answered with the same command
-// and the extra byte 00 (accepted); the status (97) with value 0x11 and 17
-// bytes; the settings (99) with value 0x08 and 8 bytes (7 on some firmware:
-// tololib then reads the lamp mode as manual). The App Box may also send a
-// one-byte keep-alive (0x2B), ignored.
+// Requests carry the extra byte FF. A "set" is answered with the same command,
+// its value echoed and the extra byte 00 (accepted), as tololib's device
+// simulator does; the status (97) with 17 bytes; the settings (99) with 8
+// bytes (7 on some firmware: tololib then reads the lamp mode as manual).
+// The value byte of a status or settings answer is not checked (tololib does
+// not check it either, and asks for the status with 0x00 when it discovers).
+// The App Box may also send a one-byte keep-alive (0x2B), ignored.
 //
-// Parsing here is strict: a datagram longer than LIMITS.datagram, a wrong
-// prefix, suffix or checksum, an unexpected command, value or length is
-// refused (undefined), never half read. A field outside its known range is
+// Parsing here is strict: a datagram longer than MAX_DATAGRAM, a wrong
+// prefix, suffix or checksum, an unexpected command or length, a set answer
+// echoing another value, is refused (undefined), never half read. A field outside its known range is
 // left undefined (the feature then keeps its last value).
 // -----------------------------------------------------------------------------
 
@@ -140,12 +142,7 @@ const statusTimer = (b) => {
  *   model (0 domestic, 1 commercial), saltBathOn.
  */
 export function parseStatus(message) {
-  if (
-    !message ||
-    message.code !== COMMAND.GET_STATUS ||
-    message.value !== STATUS_VALUE ||
-    message.extra.length !== STATUS_LENGTH
-  ) {
+  if (!message || message.code !== COMMAND.GET_STATUS || message.extra.length !== STATUS_LENGTH) {
     return undefined;
   }
   const d = message.extra;
@@ -180,7 +177,6 @@ export function parseSettings(message) {
   if (
     !message ||
     message.code !== COMMAND.GET_SETTINGS ||
-    message.value !== SETTINGS_VALUE ||
     (message.extra.length !== 8 && message.extra.length !== 7)
   ) {
     return undefined;
@@ -205,10 +201,11 @@ export function parseSettings(message) {
 
 /**
  * The answer of a set: `true` accepted (extra 00), `false` refused (another
- * extra), undefined when it is not the answer of that command.
+ * extra), undefined when it is not the answer of that command: another
+ * command, or another value echoed (lesson 18 of lot 14: the exact echo).
  */
-export function parseSetAnswer(message, code) {
-  if (!message || message.code !== code) {
+export function parseSetAnswer(message, code, value) {
+  if (!message || message.code !== code || message.value !== value) {
     return undefined;
   }
   return message.extra.length === 1 && message.extra[0] === 0x00;

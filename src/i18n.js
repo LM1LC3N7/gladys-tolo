@@ -81,8 +81,13 @@ export const T = {
   lastRead: (when) => both(`Last read ${when.en} ago.`, `Dernière lecture il y a ${when.fr}.`),
   unreachable: (reason, wait) =>
     both(
-      `The App Box does not answer (${reason}): next try in ${wait.en}. Turning off is still sent.`,
-      `L’App Box ne répond pas (${reason}) : nouvel essai dans ${wait.fr}. L’extinction est toujours envoyée.`,
+      `The App Box does not answer (${reason.en}): next try in ${wait.en}. A turn off is still sent.`,
+      `L’App Box ne répond pas (${reason.fr}) : nouvel essai dans ${wait.fr}. Une extinction part quand même.`,
+    ),
+  timerStop: (time) =>
+    both(
+      `A session started from Gladys ran without a confirmed timer: turn off sent at ${time} UTC.`,
+      `Une séance lancée depuis Gladys tournait sans minuterie confirmée : extinction envoyée à ${time} UTC.`,
     ),
   summary: (status) => {
     const name = statusText(status);
@@ -93,6 +98,25 @@ export const T = {
     return both(`${name.en}${temp.en}`, `${name.fr}${temp.fr}`);
   },
 };
+
+/** Why an exchange failed (src/tolo/udp.js ToloError), in both languages. */
+export function reasonText(err) {
+  if (err?.kind === 'not-sent') {
+    const code = err.code ? ` (${err.code})` : '';
+    return both(`nothing could leave${code}`, `rien n’a pu partir${code}`);
+  }
+  if (err?.kind === 'no-answer') {
+    if (err.ignored > 0) {
+      return both(
+        `no valid answer, ${err.ignored} ignored`,
+        `pas de réponse valide, ${err.ignored} ignorée(s)`,
+      );
+    }
+    const code = err.code ? ` (${err.code})` : '';
+    return both(`no answer${code}`, `pas de réponse${code}`);
+  }
+  return both('error', 'erreur');
+}
 
 /** Refusals of the commands (shown by Gladys when the ack fails). */
 export const ERRORS = {
@@ -105,12 +129,8 @@ export const ERRORS = {
       `La consigne doit être un nombre entier de ${min} à ${max} °C (« Consigne la plus haute »). Rien envoyé.`,
     ),
   heatingDisabled: both(
-    'Heating from Gladys is off: turn on “Allow heating from Gladys” in the configuration. Turning off always works. Nothing sent.',
-    'Le chauffage depuis Gladys est désactivé : activez « Autoriser le chauffage depuis Gladys » dans la configuration. L’extinction fonctionne toujours. Rien envoyé.',
-  ),
-  unknownDevice: both(
-    'This device is not the App Box of the configuration. Nothing sent.',
-    'Cet appareil n’est pas l’App Box de la configuration. Rien envoyé.',
+    'Heating from Gladys is off: turn on “Allow heating from Gladys” in the configuration (turning off is never held back by this option). Nothing sent.',
+    'Le chauffage depuis Gladys est désactivé : activez « Autoriser le chauffage depuis Gladys » dans la configuration (l’extinction n’est jamais retenue par cette option). Rien envoyé.',
   ),
   noConfig: both(
     'No App Box address configured: nothing sent.',
@@ -120,6 +140,33 @@ export const ERRORS = {
     'The configuration changed meanwhile: heating not sent.',
     'La configuration a changé entre-temps : allumage non envoyé.',
   ),
+  configChangedPlain: both(
+    'The configuration changed meanwhile: nothing sent.',
+    'La configuration a changé entre-temps : rien envoyé.',
+  ),
+  raiseDuringStop: both(
+    'A turn off is in flight or not confirmed yet: only a lower setpoint is accepted. Nothing sent.',
+    'Une extinction est en cours ou pas encore confirmée : seule une consigne plus basse est acceptée. Rien envoyé.',
+  ),
+  stopAfterStart: both(
+    'Turned on, but a turn off was asked after it had left: the turn off is sent again.',
+    'Allumage parti avant l’extinction demandée ensuite : l’extinction est renvoyée.',
+  ),
+  timerUnconfirmed: (what) =>
+    both(
+      `Turned on, timer not confirmed (${what.en}): the integration sets it again, and turns the App Box off if it is still missing.`,
+      `Allumée, minuterie non confirmée (${what.fr}) : l’intégration la règle à nouveau, et éteint l’App Box si elle manque toujours.`,
+    ),
+  refusedButReads: (what) =>
+    both(
+      `The App Box answered with a refusal, but reads: ${what.en}.`,
+      `L’App Box a répondu par un refus, mais indique : ${what.fr}.`,
+    ),
+  sideEffect: (name) =>
+    both(
+      `The ${name.en} command turned the App Box on: turn off sent.`,
+      `La commande ${name.fr} a mis l’App Box en marche : extinction envoyée.`,
+    ),
   stopMeanwhile: both(
     'A turn off was asked meanwhile: heating not sent.',
     'Une extinction a été demandée entre-temps : allumage non envoyé.',
@@ -142,25 +189,32 @@ export const ERRORS = {
   ),
   unknownState: (reason) =>
     both(
-      `The state of the App Box could not be read (${reason}): heating not sent.`,
-      `L’état de l’App Box n’a pas pu être lu (${reason}) : allumage non envoyé.`,
+      `The state of the App Box could not be read (${reason.en}): heating not sent.`,
+      `L’état de l’App Box n’a pas pu être lu (${reason.fr}) : allumage non envoyé.`,
     ),
   missing: both(
-    'The state of the App Box is incomplete (power, setpoint or timer missing): heating not sent.',
-    'L’état de l’App Box est incomplet (marche, consigne ou minuterie manquante) : allumage non envoyé.',
+    'The power state of the App Box is unreadable: heating not sent.',
+    'L’état de marche de l’App Box est illisible : allumage non envoyé.',
   ),
   prepareFailed: (reason) =>
     both(
-      `The timer or the setpoint could not be set and read back (${reason}): heating not sent.`,
-      `La minuterie ou la consigne n’a pas pu être réglée puis relue (${reason}) : allumage non envoyé.`,
+      `The timer or the setpoint could not be set and read back (${reason.en}): heating not sent.`,
+      `La minuterie ou la consigne n’a pas pu être réglée puis relue (${reason.fr}) : allumage non envoyé.`,
     ),
-  notSent: (reason) => both(`Not sent (${reason}).`, `Non envoyée (${reason}).`),
+  notSent: (reason) => both(`Not sent (${reason.en}).`, `Non envoyée (${reason.fr}).`),
   refused: both('The App Box refused the command.', 'L’App Box a refusé la commande.'),
   sentUnconfirmed: (reason) =>
     both(
-      `Sent, without confirmation (${reason}): check the App Box.`,
-      `Envoyée, sans confirmation (${reason}) : vérifiez l’App Box.`,
+      `Sent, without confirmation (${reason.en}): check the App Box.`,
+      `Envoyée, sans confirmation (${reason.fr}) : vérifiez l’App Box.`,
     ),
+  answerRefused: both('the App Box answered with a refusal', 'l’App Box a répondu par un refus'),
+  timerRead: (minutes) =>
+    minutes === null
+      ? both('no timer running', 'aucune minuterie en cours')
+      : both(`timer ${minutes ?? '?'} min`, `minuterie ${minutes ?? '?'} min`),
+  LAMP: both('lamp', 'lampe'),
+  FAN: both('fan', 'ventilateur'),
   noReadBack: both('no read back', 'pas de relecture'),
   readBack: (what) => both(`the App Box reads: ${what.en}`, `l’App Box indique : ${what.fr}`),
 };

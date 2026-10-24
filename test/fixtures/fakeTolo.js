@@ -34,10 +34,15 @@ export function frame(code, value, extra) {
 /**
  * The App Box. The test may set: `silent` (receives, never answers),
  * `drop` (the next N datagrams are lost), `delay` (ms before an answer),
- * `delays` (ms, by command code), `refuse` (command codes answered 01),
- * `applies` (false: sets are acked but change nothing), `down` (sending
- * fails: EHOSTUNREACH), `junkFirst` (before each answer, a datagram from
- * another port and a malformed one), `answerFrom` (another source address).
+ * `delays` (ms, by command code), `refuse` (command codes answered 01,
+ * not applied), `refuseApplied` (answered 01 but applied), `applies`
+ * (false: sets are acked but change nothing), `down` (sending fails:
+ * EHOSTUNREACH), `icmp` (each datagram is answered by a socket error,
+ * ECONNREFUSED, as a closed port), `timerIgnored` (the power on runs
+ * without a timer, whatever the settings), `lampPowersOn` (a lamp or fan
+ * set also turns the App Box on), `junkFirst` (before each answer, a
+ * datagram from another port and a malformed one), `answerFrom` (another
+ * source address).
  */
 export function fakeAppBox(over = {}) {
   const status = Buffer.alloc(17);
@@ -57,7 +62,11 @@ export function fakeAppBox(over = {}) {
     delay: 2,
     delays: {},
     refuse: new Set(),
+    refuseApplied: new Set(),
     applies: true,
+    icmp: false,
+    timerIgnored: false,
+    lampPowersOn: false,
     down: false,
     junkFirst: false,
     answerFrom: undefined,
@@ -83,22 +92,32 @@ export function fakeAppBox(over = {}) {
         status[0] = value;
         status[3] = (status[3] & ~3) | (value ? 0 : 1);
         if (value) {
-          status[2] = settings[1] === 0xff ? 61 : settings[1];
+          status[2] = settings[1] === 0xff || box.timerIgnored ? 61 : settings[1];
         } else {
           status[2] = 61;
         }
         break;
       case COMMAND.SET_POWER_TIMER:
+        // As tololib's simulator: the status timer follows (unless ignored).
         settings[1] = value;
+        if (!box.timerIgnored && status[0] === 1) {
+          status[2] = value;
+        }
         break;
       case COMMAND.SET_TARGET_TEMPERATURE:
         settings[0] = value;
         break;
       case COMMAND.SET_LAMP_ON:
         status[7] = value;
+        if (box.lampPowersOn) {
+          apply(COMMAND.SET_POWER_ON, 1);
+        }
         break;
       case COMMAND.SET_FAN_ON:
         status[9] = value;
+        if (box.lampPowersOn) {
+          apply(COMMAND.SET_POWER_ON, 1);
+        }
         break;
       default:
     }
@@ -115,6 +134,9 @@ export function fakeAppBox(over = {}) {
       return frame(message.code, message.value, [0x01]);
     }
     apply(message.code, message.value);
+    if (box.refuseApplied.has(message.code)) {
+      return frame(message.code, message.value, [0x01]);
+    }
     return frame(message.code, message.value, [0x00]);
   };
 
@@ -151,6 +173,14 @@ export function fakeAppBox(over = {}) {
       box.log.push({ code: message.code, value: message.value, at: Date.now() });
       if (box.drop > 0) {
         box.drop -= 1;
+        return;
+      }
+      if (box.icmp) {
+        setTimeout(() => {
+          if (!closed) {
+            socket.emit('error', Object.assign(new Error('refused'), { code: 'ECONNREFUSED' }));
+          }
+        }, 1);
         return;
       }
       if (box.silent) {

@@ -105,6 +105,10 @@ export const TIMINGS = {
   stopAttempts: 4,
   /** Reads after a command, spaced: its effect, then a check. */
   followUps: [5 * SECOND, 20 * SECOND],
+  /** After a start with a turn off guard restored from /data: one read this soon. */
+  guardRead: 5 * SECOND,
+  /** A session watch lasts the session duration plus this margin. */
+  sessionWatchMargin: 2 * MINUTE,
   /** A command not seen yet keeps its guard this long. */
   guard: 2 * MINUTE,
   /** A turn off sent again at most this often while heating may land after it. */

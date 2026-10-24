@@ -69,16 +69,20 @@ test/                             node --test, against the SDK's fake Gladys (in
   bytes (`test/encoding.test.js`).
 - **Style.** Prettier formats, ESLint catches mistakes. Comments explain why,
   in English. Tests never touch the network beyond the loopback.
-- **UDP.** One socket per exchange (never a shared socket: a late answer
-  would be taken for another request's); source address and port checked,
-  datagram size bounded, frame, command, value and length checked. Only the
+- **UDP.** One socket per attempt, all closed at the end of the exchange
+  (never a shared socket: a late answer would be taken for another
+  request's); a socket error ends one attempt only; source address and port
+  checked, datagram size bounded, frame, command, length and the echo of a
+  set checked; every answer judged on a read. Only the
   commands of `COMMAND` are ever sent.
 - **TOLO.** Turning on and the setpoint stay behind `allow_heating` (off by
   default): a button and a thermostat setpoint, never a switch; turning on
   is decided on a fresh read, sets the timer (`session_minutes`, never "no
   timer", 60 min at most) and caps the setpoint (`max_temperature`, 60 °C at
   most) before it, both read back; the option, a turn off and the deadline
-  are checked again right before every datagram. Turning off is never held
+  are checked again right before every datagram; it is confirmed only with
+  the timer read back, and a Gladys session without it is turned off.
+  Turning off (any value presses it) is never held
   back (option, command in flight, read, unreachable App Box, before the
   first read), never preceded by a read, sent again when a turn on may land
   after it, and reaffirmed by the reads of the next 2 min (guard in `/data`).

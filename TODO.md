@@ -25,6 +25,23 @@ up to date at the end of every milestone.
       timer and setpoint set and read back first; test button; docs en/fr;
       cover. Tested against a fake App Box only (and real loopback sockets
       for the transport).
+- [x] **Review r1 fixes** (2026-10-24), tests in `test/review1.test.js`:
+      1 a turn on is confirmed only with a timer of 1 to `session_minutes`
+      read back; a Gladys session found without it (then, or by a later
+      read, until its end + 2 min) gets the timer again, then is turned off
+      (logged, in the status). 2 any value presses "Turn off". 3 a socket
+      error (ICMP) ends one attempt only; one fresh socket per attempt.
+      4 a "refused" answer is judged on a read (turn on, turn off, setpoint,
+      lamp, fan). 5 a lamp/fan command that turns the App Box on: turned
+      off at once, refused. 6 docs and texts without false absolutes,
+      complete refusal lists. 7 a guard restored from /data gets a read 5 s
+      after the start. 8 during a turn off guard, only a lower setpoint.
+      9 a turn off before the configuration is loaded uses the SDK cache
+      (`gladys.config`), else the guard address in /data. 10 the value byte
+      of status and settings answers is not checked (as tololib). 11 a set
+      answer must echo the value sent. 12 refusal texts fixed (both
+      languages, exact causes). 13 a turn on overtaken by a turn off is not
+      a success. 14 comment fixed. 15 "4 datagrams at most".
 - [ ] **Milestone 2 — real App Box**: run against a real App Box (see "To
       check"), turn the frames (anonymized) into fixtures.
 - [ ] **Milestone 3 — more**: discovery through the core
@@ -36,11 +53,20 @@ up to date at the end of every milestone.
 ## To check on a real App Box
 
 - Whether a set is answered with its own value echoed (as tololib's
-  simulator does): the code only needs the command and the extra byte 00,
-  the value is not used.
+  simulator does): the code requires the echo (review r1, lesson 18 of
+  lot 14). If the real App Box does not echo, every command becomes "sent,
+  without confirmation" (the read back still shows the effect): relax it
+  then.
+- The meaning of the extra byte of a set answer (00 accepted): every answer
+  is judged on a read anyway.
+- The value byte of status and settings answers (0x11 and 0x08 in tololib's
+  simulator; not checked here, as tololib).
+- Whether the lamp and fan commands only drive their output (an App Box
+  turned on by them is turned off at once).
 - Whether the power timer set before the power on is the one the session
   uses (status byte 2 counting down), and what status byte 2 shows while
-  off.
+  off. Until checked, a turn on without the timer read back is not a
+  success, and the session is turned off if the timer cannot be set.
 - Whether a status read right after a set already shows its effect (else
   every command is "sent, without confirmation" and the follow-up reads
   show it).
@@ -67,11 +93,13 @@ up to date at the end of every milestone.
   nothing to verify before a command: the App Box is "the one answering at
   the configured address" (docs ask for a fixed DHCP lease). A new address
   keeps the device and its history.
-- **UDP, one socket per exchange**: attribution of answers by the socket
-  (the kernel filters other sources of a connected socket; checked again in
-  code); never a shared socket. A set answer is accepted on its command code
-  and the extra byte 00 (refused otherwise); its value is not compared (the
-  real App Box's echo is unknown): the confirmation is always a read after.
+- **UDP, one socket per attempt** (all closed at the end of the exchange):
+  attribution of answers by the socket (the kernel filters other sources of
+  a connected socket; checked again in code); never a shared socket. A
+  socket error (ICMP port unreachable, EHOSTUNREACH, a failed send) ends
+  that attempt only. A set answer must have its command code and the value
+  sent echoed; extra 00 "accepted", else "refused"; either way the outcome
+  is decided on a read after.
 - **Retries**: reads 3 × 1 s (polling), 2 × 400 ms (commands); sets are
   idempotent (power on/off, values), so resending one on silence is safe;
   every resend of a power on passes the option, turn off and deadline
@@ -95,8 +123,22 @@ up to date at the end of every milestone.
   lot 14), restored after a restart for the same address only. In memory,
   guards and deadlines use the monotonic clock; /data uses the wall clock.
 - **Lamp and fan** as `light/binary` and `switch/binary`: an "everything
-  on/off" may reach them, which heats nothing (the fan of a steam room
-  vents). One command at a time per role.
+  on/off" may reach them. According to tololib they only drive their
+  output (not checked); a read showing the App Box turned on by one of
+  them (off just before, no turn on from Gladys in flight) turns it off at
+  once. One command at a time per role.
+- **Session watch** (review r1): from the first power on datagram of a
+  turn on from Gladys, for `session_minutes` + 2 min, every status read
+  needs the power off, or a timer of 0 to `session_minutes` minutes (0: a
+  timer running out); otherwise the timer is written again and read, then
+  the App Box is turned off (a guard, the status says it). The turn on's
+  own ack needs 1 to `session_minutes`. Sessions started elsewhere are not
+  watched.
+- **Turn off presses on any value** (review r1): a scene or an "everything
+  off" may send 0 or true; turning on still takes exactly 1.
+- **Setpoint during a turn off guard**: only lower than the setpoint known.
+- **Turn off before the configuration is loaded**: the address of the SDK's
+  cached configuration (`gladys.config`), else of the guard in /data.
 - **No door sensor** on TOLO: nothing like Huum's door check; the docs warn.
 - **Not read**: aroma therapy, sweep, salt bath, flow in/out, fan timer,
   target humidity (read, not published), model.

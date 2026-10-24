@@ -21,8 +21,8 @@
         "fr": "Votre App Box TOLO"
       },
       "description": {
-        "en": "Shows a TOLO steam generator or sauna with its App Box in Gladys, on the local network (UDP port 51500, no account, no cloud): status, temperature, humidity, setpoint, time left, water level, lamp, fan. Turning off always works; heating from Gladys (turning on and the setpoint) is off until you allow it below. The App Box protocol is not published by TOLO: this integration follows the open-source tololib library. Give the App Box a fixed address in your router, enter it below, save, then add the device from the Discovery tab. A steam room or a sauna heats: never start it from afar without making sure nobody is inside. Never tested with a real device. Not affiliated with TOLO.",
-        "fr": "Affiche un générateur de vapeur ou un sauna TOLO avec son App Box dans Gladys, en réseau local (UDP, port 51500, sans compte ni cloud) : statut, température, humidité, consigne, temps restant, niveau d'eau, lampe, ventilateur. L'extinction fonctionne toujours ; le chauffage depuis Gladys (allumage et consigne) reste désactivé tant que vous ne l'autorisez pas ci-dessous. Le protocole de l'App Box n'est pas publié par TOLO : cette intégration suit la bibliothèque libre tololib. Donnez une adresse fixe à l'App Box dans votre box, saisissez-la ci-dessous, enregistrez, puis ajoutez l'appareil depuis l'onglet Découverte. Un hammam ou un sauna chauffe : ne le lancez jamais à distance sans vous assurer que personne n'est dedans. Jamais testé avec un vrai appareil. Sans lien avec TOLO."
+        "en": "Shows a TOLO steam generator or sauna with its App Box in Gladys, on the local network (UDP port 51500, no account, no cloud): status, temperature, humidity, setpoint, time left, water level, lamp, fan. Turning off is never held back by the heating option; heating from Gladys (turning on and the setpoint) is off until you allow it below. The App Box protocol is not published by TOLO: this integration follows the open-source tololib library. Give the App Box a fixed address in your router, enter it below, save, then add the device from the Discovery tab. A steam room or a sauna heats: never start it from afar without making sure nobody is inside. Never tested with a real device. Not affiliated with TOLO.",
+        "fr": "Affiche un générateur de vapeur ou un sauna TOLO avec son App Box dans Gladys, en réseau local (UDP, port 51500, sans compte ni cloud) : statut, température, humidité, consigne, temps restant, niveau d'eau, lampe, ventilateur. L'extinction n'est jamais retenue par l'option de chauffage ; le chauffage depuis Gladys (allumage et consigne) reste désactivé tant que vous ne l'autorisez pas ci-dessous. Le protocole de l'App Box n'est pas publié par TOLO : cette intégration suit la bibliothèque libre tololib. Donnez une adresse fixe à l'App Box dans votre box, saisissez-la ci-dessous, enregistrez, puis ajoutez l'appareil depuis l'onglet Découverte. Un hammam ou un sauna chauffe : ne le lancez jamais à distance sans vous assurer que personne n'est dedans. Jamais testé avec un vrai appareil. Sans lien avec TOLO."
       },
       "links": [
         {
@@ -67,8 +67,8 @@
         "fr": "Autoriser le chauffage depuis Gladys"
       },
       "description": {
-        "en": "Off by default. On: the \"Turn on (heat)\" button and the setpoint may start or change heating; each turn on first sets the timer of the App Box to the session duration below. Off: they refuse every request. Turning off always works.",
-        "fr": "Désactivé par défaut. Activé : le bouton « Allumer (chauffer) » et la consigne peuvent lancer ou modifier la chauffe ; chaque allumage règle d'abord la minuterie de l'App Box sur la durée de séance ci-dessous. Désactivé : ils refusent toute demande. L'extinction fonctionne toujours."
+        "en": "Off by default. On: the \"Turn on (heat)\" button and the setpoint may start or change heating; each turn on first sets the timer of the App Box to the session duration below. Off: they refuse every request. Turning off is never held back by this option.",
+        "fr": "Désactivé par défaut. Activé : le bouton « Allumer (chauffer) » et la consigne peuvent lancer ou modifier la chauffe ; chaque allumage règle d'abord la minuterie de l'App Box sur la durée de séance ci-dessous. Désactivé : ils refusent toute demande. L'extinction n'est jamais retenue par cette option."
       },
       "required": false,
       "default": false
@@ -81,8 +81,8 @@
         "fr": "Durée de séance (min)"
       },
       "description": {
-        "en": "The timer set on the App Box before every turn on from Gladys: it stops by itself after this time (30 min by default; 60 min, the limit of the App Box, at most). Never \"no timer\".",
-        "fr": "La minuterie réglée sur l'App Box avant chaque allumage depuis Gladys : elle s'arrête d'elle-même après cette durée (30 min par défaut ; 60 min, la limite de l'App Box, au plus). Jamais « sans minuterie »."
+        "en": "The timer set on the App Box before every turn on from Gladys (30 min by default; 60 min, the limit of the App Box, at most; never \"no timer\"). According to tololib, the App Box should stop by itself after this time (not checked on a real device): a turn on is confirmed only when a read shows this timer running, and a session from Gladys found without it gets the timer again, then is turned off.",
+        "fr": "La minuterie réglée sur l'App Box avant chaque allumage depuis Gladys (30 min par défaut ; 60 min, la limite de l'App Box, au plus ; jamais « sans minuterie »). D'après tololib, l'App Box devrait s'arrêter d'elle-même après cette durée (non vérifié sur un vrai appareil) : un allumage n'est confirmé que si une lecture montre cette minuterie en cours, et une séance lancée depuis Gladys trouvée sans elle reçoit à nouveau la minuterie, puis est éteinte."
       },
       "required": false,
       "default": 30,
@@ -113,8 +113,8 @@
         "fr": "Intervalle de rafraîchissement (s)"
       },
       "description": {
-        "en": "How often the App Box is read, in seconds (never more often, even after a restart).",
-        "fr": "Fréquence de lecture de l'App Box, en secondes (jamais plus souvent, même après un redémarrage)."
+        "en": "How often the App Box is read, in seconds. The periodic reads are never closer than this interval, even after a restart; a command adds its own reads.",
+        "fr": "Fréquence de lecture de l'App Box, en secondes. Les lectures périodiques ne sont jamais plus rapprochées que cet intervalle, même après un redémarrage ; une commande ajoute ses propres lectures."
       },
       "required": false,
       "default": 30,

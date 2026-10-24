@@ -42,9 +42,9 @@
 import { performance } from 'node:perf_hooks';
 import { DEVICE_TRANSPORTS, createLogger } from '@gladysassistant/integration-sdk';
 import { normalizeConfig, usable } from './config.js';
-import { FEATURES, PRESSED, SECOND, TEMPERATURE, TIMINGS } from './constants.js';
+import { FEATURES, MINUTE, PRESSED, SECOND, TEMPERATURE, TIMINGS } from './constants.js';
 import { COMMAND_ROLES, appBoxIds, buildDevice, parseFeatureId, statesOf } from './devices.js';
-import { ERRORS, T, age, join, statusText, word } from './i18n.js';
+import { ERRORS, T, age, join, reasonText, statusText, word } from './i18n.js';
 import { ToloClient } from './tolo/client.js';
 import { ERROR_KINDS } from './tolo/udp.js';
 import { PORT } from './tolo/protocol.js';
@@ -71,7 +71,9 @@ const freshBox = () => ({
 class Refusal extends Error {}
 
 /** The reason of a failed exchange, for a status or a refusal (no secret exists here). */
-const reasonOf = (err) => String(err?.message ?? 'error').slice(0, 120);
+/** The reason of a failed exchange, in both languages (a refusal keeps its message). */
+const reasonOf = (err) =>
+  err instanceof Refusal ? { en: err.message, fr: err.message } : reasonText(err);
 
 /** Whether a datagram of this exchange may have left. */
 const mayHaveLeft = (err) => err?.kind === ERROR_KINDS.NO_ANSWER || (err?.sent ?? 0) > 0;
@@ -120,6 +122,13 @@ export class ToloApp {
     this.stopsInFlight = 0;
     /** The non-protective commands in progress, by role. */
     this.busy = new Set();
+    /**
+     * A session turned on from Gladys: until its end, every status read checks
+     * that a timer of at most the session duration runs. { until, enforcing }.
+     */
+    this.sessionWatch = undefined;
+    /** A note for the status after the integration turned a session off itself. */
+    this.alert = undefined;
   }
 
   // --- Lifecycle -------------------------------------------------------------
@@ -162,10 +171,30 @@ export class ToloApp {
     const wait = fresh ? 0 : this.firstWait();
     if (wait > 0) {
       this.schedule(wait);
+      if (this.stopGuardActive() && wait > TIMINGS.guardRead) {
+        // A turn off guard restored from /data: one protective read soon,
+        // whatever the interval, then the usual follow-ups.
+        this.guardRead();
+      }
       await this.publishAll();
       return;
     }
     await this.tick();
+  }
+
+  /** The read of a guard restored from /data, 5 s after the start. */
+  guardRead() {
+    const generation = this.generation;
+    const b = this.box;
+    const handle = this.timers.setTimeout(() => {
+      b.followUps.delete(handle);
+      if (generation === this.generation) {
+        this.tick()
+          .then(() => this.followUp())
+          .catch(() => this.logger.error('TOLO refresh failed'));
+      }
+    }, TIMINGS.guardRead);
+    b.followUps.add(handle);
   }
 
   /** The wait before the first read after a container start, from the time kept in /data. */
@@ -399,7 +428,7 @@ export class ToloApp {
     b.online = false;
     b.wait = wait;
     b.error = reasonOf(err);
-    this.logger.warn(`TOLO: ${b.error}; next try in ${Math.round(wait / 1000)} s`);
+    this.logger.warn(`TOLO: ${b.error.en}; next try in ${Math.round(wait / 1000)} s`);
     return wait;
   }
 
@@ -410,12 +439,13 @@ export class ToloApp {
       return [false, this.config.badHost ? T.badHost : T.noHost];
     }
     if (b.online === false) {
-      return [false, T.unreachable(b.error ?? 'error', age(b.wait ?? this.interval))];
+      return [false, T.unreachable(b.error ?? reasonText(undefined), age(b.wait ?? this.interval))];
     }
     if (b.online === undefined || !b.status) {
       return [false, b.timer ? T.waiting(age(Math.max(0, this.due - this.now()))) : T.connecting];
     }
-    return [true, T.connected(T.summary(b.status))];
+    const connected = T.connected(T.summary(b.status));
+    return [true, this.alert ? join(connected, this.alert) : connected];
   }
 
   async updateStatus() {
@@ -598,6 +628,19 @@ export class ToloApp {
     return undefined;
   }
 
+  /**
+   * The address a turn off goes to: the configuration, else (not loaded
+   * yet, right after a start) the SDK's cache of it, else the address of a
+   * turn off guard kept in /data.
+   */
+  stopHost() {
+    return (
+      this.config.host ??
+      normalizeConfig(this.gladys.config ?? {}).host ??
+      this.memory.stopGuard?.host
+    );
+  }
+
   async setValue(_device, feature, value) {
     // The deadlines count from the arrival of the command, before any wait.
     const received = this.mono();
@@ -605,15 +648,24 @@ export class ToloApp {
     if (!role || !COMMAND_ROLES.includes(role)) {
       throw this.refusal(ERRORS.readOnly);
     }
+    if (role === FEATURES.HEAT_OFF) {
+      // Any value presses it (0, true, "on"...): a scene, an MCP client or an
+      // "everything off" may send anything, and turning off is never dangerous.
+      const host = this.stopHost();
+      if (!host) {
+        throw this.refusal(ERRORS.noConfig);
+      }
+      return this.turnOff(received, host);
+    }
     if (!this.config.host) {
       throw this.refusal(ERRORS.noConfig);
     }
-    if (role === FEATURES.HEAT_ON || role === FEATURES.HEAT_OFF) {
-      // Strictly 1: null, '', true, 0 or "on" never press a button.
+    if (role === FEATURES.HEAT_ON) {
+      // Strictly 1: null, '', true, 0 or "on" never press "Turn on".
       if (value !== PRESSED && value !== String(PRESSED)) {
         throw this.refusal(ERRORS.badButton);
       }
-      return role === FEATURES.HEAT_OFF ? this.turnOff(received) : this.heat(received);
+      return this.heat(received);
     }
     if (role === FEATURES.TARGET) {
       const temperature = ToloApp.setpointOf(value);
@@ -699,6 +751,15 @@ export class ToloApp {
     this.publishAll().catch((err) => this.logger.warn(`Publishing failed: ${err.message}`));
   }
 
+  /**
+   * A timer that bounds a session of `minutes`: a whole number of minutes
+   * left, 1 to `minutes` (0 too, with `ending`: a timer running out).
+   */
+  static timerBounds(status, minutes, { ending = false } = {}) {
+    const left = status.powerTimer;
+    return Number.isInteger(left) && left >= (ending ? 0 : 1) && left <= minutes;
+  }
+
   async sendHeat(host, received, generation, entry) {
     const b = this.box;
     // Already on, as a read of less than 10 s shows: nothing to send (a scene
@@ -755,7 +816,10 @@ export class ToloApp {
           const t = this.mono();
           this.lastSentAt = t;
           this.lastStartAt = t;
-          entry.sentAt ??= t;
+          if (entry.sentAt === undefined) {
+            entry.sentAt = t;
+            this.watchSession(host);
+          }
           this.logger.info(`TOLO: turn on (timer ${this.config.sessionMinutes} min)`);
         }),
       );
@@ -768,46 +832,55 @@ export class ToloApp {
         throw this.refusal(ERRORS.notSent(reasonOf(err)));
       }
       // A datagram left: it may have reached the App Box.
-      this.logger.warn(`TOLO: turn on without answer (${reasonOf(err)})`);
+      this.logger.warn(`TOLO: turn on without answer (${reasonOf(err).en})`);
       this.unconfirmed();
       this.followUp();
       throw this.refusal(ERRORS.sentUnconfirmed(reasonOf(err)));
     }
-    if (!accepted) {
-      this.followUp();
-      throw this.refusal(ERRORS.refused);
-    }
+    // Answered, accepted or not (the meaning of the answer byte comes from
+    // tololib's simulator, never seen on a real App Box): the read decides.
     this.unconfirmed();
     const after = await this.readBack(host, 'status', at(TIMINGS.commandAnswerBy));
     this.followUp();
     if (after === undefined) {
-      throw this.refusal(ERRORS.sentUnconfirmed(ERRORS.noReadBack[this.lang]));
+      throw this.refusal(
+        ERRORS.sentUnconfirmed(accepted ? ERRORS.noReadBack : ERRORS.answerRefused),
+      );
     }
     this.show(generation, after);
     if (after.powerOn !== true) {
-      throw this.refusal(ERRORS.sentUnconfirmed(ERRORS.readBack(statusText(after))[this.lang]));
+      if (!accepted && after.powerOn === false) {
+        // Refused, and read off: nothing to guard nor to watch.
+        this.unconfirmedStartUntil = -Infinity;
+        this.sessionWatch = undefined;
+        throw this.refusal(ERRORS.refused);
+      }
+      throw this.refusal(ERRORS.sentUnconfirmed(ERRORS.readBack(statusText(after))));
     }
-    // Confirmed by the read: on (observe() lifted the unconfirmed guard).
+    if (!ToloApp.timerBounds(after, this.config.sessionMinutes)) {
+      // On, without the timer asked: set it again in the background, else turn off.
+      if (this.sessionWatch) {
+        this.enforceTimer(this.sessionWatch, generation);
+      }
+      throw this.refusal(ERRORS.timerUnconfirmed(ERRORS.timerRead(after.powerTimer)));
+    }
+    if (entry.seq !== this.protectSeq) {
+      throw this.refusal(ERRORS.stopAfterStart);
+    }
+    this.alert = undefined;
+    if (!accepted) {
+      throw this.refusal(ERRORS.refusedButReads(statusText(after)));
+    }
     return undefined;
   }
 
   /**
    * Before a turn on: the timer of the App Box set to the session duration,
    * and a setpoint above the highest one lowered to it, both read back.
-   * Neither heats: on any failure the turn on is refused, "heating not sent".
+   * Neither heats: unless the read back shows both right, the turn on is
+   * refused, "heating not sent".
    */
   async prepare(host, received, generation, settings) {
-    const writes = [];
-    if (settings.powerTimer !== this.config.sessionMinutes) {
-      writes.push(['timer', this.config.sessionMinutes]);
-    }
-    const target = settings.targetTemperature;
-    if (target === undefined || target > this.config.maxTemperature) {
-      writes.push(['target', this.config.maxTemperature]);
-    }
-    if (writes.length === 0) {
-      return;
-    }
     const at = (ms) => received + ms;
     const options = this.commandOptions(
       at(TIMINGS.heatPrepareBy - TIMINGS.commandAttemptTimeout),
@@ -816,18 +889,22 @@ export class ToloApp {
         this.lastSentAt = this.mono();
       },
     );
-    const results = await Promise.allSettled(
-      writes.map(([command, value]) => this.client.set(host, command, value, options)),
-    );
-    const failure = results.find((r) => r.status === 'rejected' || r.value !== true);
-    if (failure) {
-      const reason =
-        failure.status === 'rejected' ? reasonOf(failure.reason) : word(ERRORS.refused, 'en');
-      throw this.refusal(ERRORS.prepareFailed(reason));
+    // The timer is always written (the session never relies on a timer set
+    // earlier); the setpoint only when the fresh read shows it above the cap.
+    const writes = [this.client.set(host, 'timer', this.config.sessionMinutes, options)];
+    const target = settings.targetTemperature;
+    if (target === undefined || target > this.config.maxTemperature) {
+      writes.push(this.client.set(host, 'target', this.config.maxTemperature, options));
     }
+    const results = await Promise.allSettled(writes);
+    const lost = results.find((r) => r.status === 'rejected' && !mayHaveLeft(r.reason));
+    if (lost) {
+      throw this.refusal(ERRORS.prepareFailed(reasonOf(lost.reason)));
+    }
+    // Answered, refused or silent: the read back decides.
     const check = await this.readBack(host, 'settings', at(TIMINGS.heatCheckBy));
     if (check === undefined) {
-      throw this.refusal(ERRORS.prepareFailed(ERRORS.noReadBack[this.lang]));
+      throw this.refusal(ERRORS.prepareFailed(ERRORS.noReadBack));
     }
     this.show(generation, undefined, check);
     if (
@@ -835,7 +912,14 @@ export class ToloApp {
       check.targetTemperature === undefined ||
       check.targetTemperature > this.config.maxTemperature
     ) {
-      throw this.refusal(ERRORS.prepareFailed(ERRORS.noReadBack[this.lang]));
+      throw this.refusal(
+        ERRORS.prepareFailed(
+          ERRORS.readBack({
+            en: `${ERRORS.timerRead(check.powerTimer).en}, ${check.targetTemperature ?? '?'} °C`,
+            fr: `${ERRORS.timerRead(check.powerTimer).fr}, ${check.targetTemperature ?? '?'} °C`,
+          }),
+        ),
+      );
     }
   }
 
@@ -862,6 +946,103 @@ export class ToloApp {
       (this.heatEntry?.sentAt !== undefined && !this.heatEntry.answered) ||
       this.mono() < this.unconfirmedStartUntil
     );
+  }
+
+  // --- Session timer -------------------------------------------------------------
+
+  /** A power on left from Gladys: its session is watched until its end. */
+  watchSession(host) {
+    const minutes = this.config.sessionMinutes;
+    this.sessionWatch = {
+      host,
+      minutes,
+      until: this.mono() + minutes * MINUTE + TIMINGS.sessionWatchMargin,
+      enforcing: false,
+    };
+  }
+
+  /** A status read through the session watch: on without a bounding timer -> enforce. */
+  watchRead(status) {
+    const w = this.sessionWatch;
+    if (!w) {
+      return;
+    }
+    if (this.mono() >= w.until || w.host !== this.config.host) {
+      this.sessionWatch = undefined;
+      return;
+    }
+    if (status.powerOn === false && !this.startMayLand) {
+      // The session is over.
+      this.sessionWatch = undefined;
+      return;
+    }
+    if (status.powerOn === true && !ToloApp.timerBounds(status, w.minutes, { ending: true })) {
+      this.enforceTimer(w, this.generation);
+    }
+  }
+
+  /**
+   * A session started from Gladys runs without a timer of at most its
+   * duration: the timer is written again (it bounds, so it is allowed while
+   * on), then read; still missing, the App Box is turned off, logged and
+   * said in the status. One at a time; never awaited by an ack.
+   */
+  enforceTimer(w, generation) {
+    if (w.enforcing) {
+      return;
+    }
+    w.enforcing = true;
+    const host = w.host;
+    const run = async () => {
+      this.logger.warn('TOLO: a session started from Gladys has no confirmed timer, set again');
+      let bounded;
+      try {
+        await this.client.set(host, 'timer', w.minutes, {
+          attempts: TIMINGS.commandAttempts,
+          attemptTimeout: TIMINGS.commandAttemptTimeout,
+          beforeSend: () => {
+            this.lastSentAt = this.mono();
+          },
+        });
+      } catch {
+        // The read decides.
+      }
+      try {
+        const after = await this.client.status(host, {
+          attempts: TIMINGS.commandAttempts,
+          attemptTimeout: TIMINGS.commandAttemptTimeout,
+        });
+        bounded =
+          after.powerOn === false || ToloApp.timerBounds(after, w.minutes, { ending: true });
+      } catch {
+        bounded = false;
+      }
+      if (bounded || this.sessionWatch !== w) {
+        return;
+      }
+      this.logger.warn('TOLO: still no timer on a session started from Gladys, turn off');
+      this.sessionWatch = undefined;
+      this.alert = T.timerStop(new Date(this.now()).toISOString().slice(11, 16));
+      // A turn on not sent yet gives way, like any turn off.
+      this.protectSeq += 1;
+      const sentAt = this.mono();
+      this.lastSentAt = sentAt;
+      this.guardStop(sentAt, { host });
+      try {
+        await this.sendStop(host);
+      } catch (err) {
+        this.logger.warn(`TOLO: turn off after the timer check failed (${reasonOf(err).en})`);
+      }
+      if (generation === this.generation) {
+        this.followUp();
+        this.updateStatus().catch(() => {});
+      }
+    };
+    run()
+      .catch(() => {})
+      .finally(() => {
+        w.enforcing = false;
+      });
   }
 
   // --- Turn off ----------------------------------------------------------------
@@ -909,17 +1090,17 @@ export class ToloApp {
   }
 
   /**
-   * Sets (or keeps) the guard of a turn off sent at `sentAt`: the reads of
-   * the next 2 min send it again if the App Box heats. `sticky`: a turn on
-   * left before it (it may land after): lifted by time only.
+   * Sets (or keeps) the guard of a turn off sent at `sentAt` to `host`: the
+   * reads of the next 2 min send it again if the App Box heats. `sticky`: a
+   * turn on left before it (it may land after): lifted by time only.
    */
-  guardStop(sentAt, { sticky = false } = {}) {
-    if (this.stopGuardActive()) {
+  guardStop(sentAt, { sticky = false, host = this.config.host } = {}) {
+    if (this.stopGuardActive() && this.stopGuard.host === host) {
       this.stopGuard.sticky ||= sticky;
       this.stopGuard.sentAt = Math.max(this.stopGuard.sentAt, sentAt);
     } else {
       this.stopGuard = {
-        host: this.config.host,
+        host,
         sentAt,
         until: this.mono() + TIMINGS.guard,
         reasserts: 0,
@@ -929,8 +1110,12 @@ export class ToloApp {
     this.persistStopGuard();
   }
 
-  /** One turn off exchange, counted while in flight (every turn on waits for it). */
-  sendStop(host, options = {}) {
+  /**
+   * One turn off exchange, counted while in flight (every turn on waits for
+   * it): 4 datagrams at most while the App Box is silent or a socket error
+   * (ICMP) ends an attempt.
+   */
+  sendStop(host) {
     this.stopsInFlight += 1;
     const sending = this.client.set(host, 'power', false, {
       attempts: TIMINGS.stopAttempts,
@@ -938,7 +1123,6 @@ export class ToloApp {
       beforeSend: () => {
         this.lastSentAt = this.mono();
       },
-      ...options,
     });
     sending
       .finally(() => {
@@ -952,18 +1136,18 @@ export class ToloApp {
    * TURN OFF: never held back, no read before it (it decides nothing: it is
    * always sent, never answered "already off"). Confirmed only by a read
    * showing the power off with no turn on that may still land; any turn off
-   * without that confirmation gets a guard.
+   * without that confirmation gets a guard. An answer saying "refused" is
+   * judged on the read as well.
    */
-  async turnOff(received) {
+  async turnOff(received, host) {
     // A turn on not sent yet gives way.
     this.protectSeq += 1;
     const generation = this.generation;
-    const host = this.config.host;
     const overtaken = this.heatEntry;
     const sentAt = this.mono();
     this.lastSentAt = sentAt;
     if (this.startMayLand) {
-      this.guardStop(sentAt, { sticky: true });
+      this.guardStop(sentAt, { sticky: true, host });
     }
     this.logger.info('TOLO: turn off');
     const sending = this.sendStop(host);
@@ -974,34 +1158,36 @@ export class ToloApp {
     try {
       accepted = await sending;
     } catch (err) {
-      this.logger.warn(`TOLO: turn off failed (${reasonOf(err)})`);
+      this.logger.warn(`TOLO: turn off failed (${reasonOf(err).en})`);
       if (!mayHaveLeft(err)) {
         throw this.refusal(ERRORS.notSent(reasonOf(err)));
       }
-      this.guardStop(sentAt);
+      this.guardStop(sentAt, { host });
       this.followUp();
       throw this.refusal(ERRORS.sentUnconfirmed(reasonOf(err)));
-    }
-    if (!accepted) {
-      this.guardStop(sentAt);
-      this.followUp();
-      throw this.refusal(ERRORS.refused);
     }
     const after = await this.readBack(host, 'status', received + TIMINGS.commandAnswerBy);
     this.followUp();
     if (after === undefined) {
-      this.guardStop(sentAt);
-      throw this.refusal(ERRORS.sentUnconfirmed(ERRORS.noReadBack[this.lang]));
+      this.guardStop(sentAt, { host });
+      throw this.refusal(
+        ERRORS.sentUnconfirmed(accepted ? ERRORS.noReadBack : ERRORS.answerRefused),
+      );
     }
     this.show(generation, after);
     if (after.powerOn !== false) {
-      this.guardStop(sentAt);
-      throw this.refusal(ERRORS.sentUnconfirmed(ERRORS.readBack(statusText(after))[this.lang]));
+      this.guardStop(sentAt, { host });
+      throw this.refusal(
+        accepted
+          ? ERRORS.sentUnconfirmed(ERRORS.readBack(statusText(after)))
+          : ERRORS.refusedButReads(statusText(after)),
+      );
     }
     if (this.startMayLand) {
       // Off now, but a turn on sent before may still land: the guard watches.
-      this.guardStop(sentAt, { sticky: true });
+      this.guardStop(sentAt, { sticky: true, host });
     }
+    // Off, as read (also after an answer saying "refused": the state is what counts).
     return undefined;
   }
 
@@ -1014,7 +1200,7 @@ export class ToloApp {
     heatEntry.promise
       .catch(() => {})
       .then(async () => {
-        if (this.lastStartAt > stopAt || this.config.host !== host) {
+        if (this.lastStartAt > stopAt || (this.config.host && this.config.host !== host)) {
           return;
         }
         this.logger.warn('TOLO: turn off sent again after the turn on in flight');
@@ -1022,21 +1208,24 @@ export class ToloApp {
         this.followUp();
       })
       .catch((err) => {
-        this.logger.warn(`TOLO: turn off again failed (${reasonOf(err)})`);
+        this.logger.warn(`TOLO: turn off again failed (${reasonOf(err).en})`);
         this.followUp();
       });
   }
 
   /**
-   * A status read through the guards: a turn on confirmed (power on); a turn
-   * off confirmed (power off, nothing in flight, not sticky), or reaffirmed
-   * if the App Box heats again (same address only, 3 times at most).
+   * A status read through the guards: a turn on confirmed (power on); the
+   * session timer of a turn on from Gladys; a turn off confirmed (power off,
+   * nothing in flight, not sticky), or reaffirmed if the App Box heats again
+   * (same address only, 3 times at most, never by the read back of a
+   * command nor while a turn on or a turn off is in flight).
    */
   observe(status, { fromCommand = false } = {}) {
     if (status.powerOn === true && this.mono() < this.unconfirmedStartUntil) {
       // On: the turn on landed, it cannot land any more.
       this.unconfirmedStartUntil = -Infinity;
     }
+    this.watchRead(status);
     if (!this.stopGuardActive()) {
       return;
     }
@@ -1069,65 +1258,99 @@ export class ToloApp {
       this.logger.warn('TOLO: the App Box heats again after a turn off, turn off sent again');
       this.sendStop(guard.host)
         .then(() => this.followUp())
-        .catch((err) => this.logger.warn(`TOLO: turn off reaffirmed failed (${reasonOf(err)})`));
+        .catch((err) => this.logger.warn(`TOLO: turn off reaffirmed failed (${reasonOf(err).en})`));
     }
   }
 
   // --- Setpoint, lamp, fan -------------------------------------------------------
 
-  /** The setpoint: behind the option, capped, one at a time, confirmed by the settings. */
+  /**
+   * The setpoint: behind the option, capped, one at a time, confirmed by the
+   * settings. While a turn off is in flight, not confirmed (its guard) or
+   * asked meanwhile, only a lower setpoint than the one known is accepted.
+   */
   async setpoint(received, temperature) {
     const generation = this.generation;
     const host = this.config.host;
-    this.checkHeat(generation, host);
+    const seq = this.protectSeq;
+    const known = this.box.settings?.targetTemperature;
+    const lastChecks = () => {
+      this.checkHeat(generation, host);
+      if (temperature > this.config.maxTemperature) {
+        throw this.refusal(ERRORS.badSetpoint(TEMPERATURE.min, this.config.maxTemperature));
+      }
+      const stopping = this.stopsInFlight > 0 || this.stopGuardActive() || this.protectSeq !== seq;
+      if (stopping && (known === undefined || temperature > known)) {
+        throw this.refusal(ERRORS.raiseDuringStop);
+      }
+    };
+    lastChecks();
     return this.oneAtATime(FEATURES.TARGET, async () => {
-      const lastChecks = () => {
-        this.checkHeat(generation, host);
-        if (temperature > this.config.maxTemperature) {
-          throw this.refusal(ERRORS.badSetpoint(TEMPERATURE.min, this.config.maxTemperature));
-        }
-      };
-      await this.sendSet(host, received, 'target', temperature, lastChecks);
+      const accepted = await this.sendSet(host, received, 'target', temperature, lastChecks);
       const after = await this.readBack(host, 'settings', received + TIMINGS.commandAnswerBy);
       this.followUp();
       if (after === undefined) {
-        throw this.refusal(ERRORS.sentUnconfirmed(ERRORS.noReadBack[this.lang]));
+        throw this.refusal(
+          ERRORS.sentUnconfirmed(accepted ? ERRORS.noReadBack : ERRORS.answerRefused),
+        );
       }
       this.show(generation, undefined, after);
       if (after.targetTemperature !== temperature) {
+        const read = {
+          en: `${after.targetTemperature ?? '?'} °C`,
+          fr: `${after.targetTemperature ?? '?'} °C`,
+        };
         throw this.refusal(
-          ERRORS.sentUnconfirmed(
-            ERRORS.readBack({
-              en: `${after.targetTemperature ?? '?'} °C`,
-              fr: `${after.targetTemperature ?? '?'} °C`,
-            })[this.lang],
-          ),
+          accepted ? ERRORS.sentUnconfirmed(ERRORS.readBack(read)) : ERRORS.refused,
         );
       }
+      // The setpoint asked, as read (also after an answer saying "refused").
       return undefined;
     });
   }
 
-  /** Lamp or fan: a plain set, confirmed by a status read. They never heat. */
+  /**
+   * Lamp or fan: a plain set, confirmed by a status read. According to
+   * tololib they only drive their output; should one turn the App Box on
+   * (off just before, no turn on from Gladys in flight), it is turned off at
+   * once and the command refused.
+   */
   async plainSet(role, on, received) {
     const generation = this.generation;
     const host = this.config.host;
+    const name = role === FEATURES.LAMP ? ERRORS.LAMP : ERRORS.FAN;
     return this.oneAtATime(role, async () => {
+      const before = this.box.status?.powerOn;
       const command = role === FEATURES.LAMP ? 'lamp' : 'fan';
-      await this.sendSet(host, received, command, on, () => {
+      const accepted = await this.sendSet(host, received, command, on, () => {
         if (generation !== this.generation || host !== this.config.host) {
-          throw this.refusal(ERRORS.configChanged);
+          throw this.refusal(ERRORS.configChangedPlain);
         }
       });
       const after = await this.readBack(host, 'status', received + TIMINGS.commandAnswerBy);
       this.followUp();
       if (after === undefined) {
-        throw this.refusal(ERRORS.sentUnconfirmed(ERRORS.noReadBack[this.lang]));
+        throw this.refusal(
+          ERRORS.sentUnconfirmed(accepted ? ERRORS.noReadBack : ERRORS.answerRefused),
+        );
       }
       this.show(generation, after);
+      if (after.powerOn === true && before === false && !this.heatEntry && !this.startMayLand) {
+        this.logger.warn(`TOLO: the ${name.en} command turned the App Box on, turn off`);
+        this.protectSeq += 1;
+        const sentAt = this.mono();
+        this.lastSentAt = sentAt;
+        this.guardStop(sentAt, { host });
+        this.sendStop(host)
+          .then(() => this.followUp())
+          .catch((err) => this.logger.warn(`TOLO: turn off failed (${reasonOf(err).en})`));
+        throw this.refusal(ERRORS.sideEffect(name));
+      }
       const read = role === FEATURES.LAMP ? after.lampOn : after.fanOn;
       if (read !== on) {
-        throw this.refusal(ERRORS.sentUnconfirmed(ERRORS.readBack(statusText(after))[this.lang]));
+        throw this.refusal(
+          accepted ? ERRORS.sentUnconfirmed(ERRORS.readBack(statusText(after))) : ERRORS.refused,
+        );
       }
       return undefined;
     });
@@ -1145,11 +1368,14 @@ export class ToloApp {
     }
   }
 
-  /** One set of a non-protective command; throws the right refusal when not accepted. */
+  /**
+   * One set of a non-protective command: resolves whether the App Box
+   * answered "accepted" (the caller reads back either way); throws "not
+   * sent" or "sent, without confirmation" when no answer came.
+   */
   async sendSet(host, received, command, value, check) {
-    let accepted;
     try {
-      accepted = await this.client.set(
+      return await this.client.set(
         host,
         command,
         value,
@@ -1171,10 +1397,6 @@ export class ToloApp {
       }
       this.followUp();
       throw this.refusal(ERRORS.sentUnconfirmed(reasonOf(err)));
-    }
-    if (!accepted) {
-      this.followUp();
-      throw this.refusal(ERRORS.refused);
     }
   }
 

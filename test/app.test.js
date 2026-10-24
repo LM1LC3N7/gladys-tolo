@@ -75,13 +75,17 @@ test('turning on: fresh read, timer set to the session, power on, confirmed by a
   assert.deepEqual(ctx.box.commands(), [`${COMMAND.SET_POWER_TIMER}:20`, ON]);
 });
 
-test('turning on lowers a setpoint above the highest one first, and keeps a right timer', async (t) => {
+test('turning on lowers a setpoint above the highest one first, and always writes the timer', async (t) => {
   const box = fakeAppBox();
   box.settings[0] = 60;
   box.settings[1] = 30;
   const ctx = await setup(t, { config: { ...HEAT_CFG, max_temperature: 48 }, box });
   assert.equal((await ctx.press('heat-on')).success, true);
-  assert.deepEqual(ctx.box.commands(), [`${COMMAND.SET_TARGET_TEMPERATURE}:48`, ON]);
+  assert.deepEqual(ctx.box.commands(), [
+    `${COMMAND.SET_POWER_TIMER}:30`,
+    `${COMMAND.SET_TARGET_TEMPERATURE}:48`,
+    ON,
+  ]);
 });
 
 test('turning on is refused when the timer is not read back: no power on', async (t) => {
@@ -164,7 +168,9 @@ test('a turn off overtaking a power on already sent is sent again when it settle
   ctx.box.settings[1] = 30;
   ctx.box.delays[COMMAND.SET_POWER_ON] = 1_000;
   const heat = ctx.fire('heat-on');
-  await ctx.advance(150);
+  for (let i = 0; i < 40 && ctx.box.powerOns().length === 0; i += 1) {
+    await ctx.advance(10, 10);
+  }
   assert.equal(ctx.box.powerOns().length, 1);
   ctx.box.delays[COMMAND.SET_POWER_ON] = 0;
   const off = ctx.fire('heat-off');

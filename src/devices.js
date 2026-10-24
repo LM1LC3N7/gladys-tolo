@@ -6,16 +6,17 @@
 // address, so there is no identity to key on: an App Box that changes
 // address stays the same device (FROZEN RULE, see TODO.md "Decisions"). The
 // feature roles (the last part of their external ids) are published forever:
-// never rename them. A republished device keeps every feature of the device
-// already created.
+// never rename them, never drop one (every role is always published).
 //
 // Heating must never start through an "everything on" (Google Home, Alexa,
 // HomeKit, MCP, `switch.*` scenes): no switch, no writable binary for it.
 // The heating state is read only (`unknown/binary`); turning on and turning
 // off are two `button/push` features. The setpoint
 // (`thermostat/target-temperature`) is writable, behind the same option as
-// turning on. The lamp (`light/binary`) and the fan (`switch/binary`) heat
-// nothing: plain on/off.
+// turning on. The lamp (`light/binary`) and the fan (`switch/binary`) are
+// plain on/off: according to tololib they only drive their output (not
+// checked on a real App Box; src/app.js turns the App Box off should one of
+// them turn it on).
 //
 // Categories and units are those the core lists
 // (DEVICE_FEATURE_UNITS_BY_CATEGORY): °C on temperature-sensor and
@@ -144,7 +145,10 @@ export function parseFeatureId(gladys, externalId) {
   return ROLES.includes(role) ? role : undefined;
 }
 
-/** The Gladys device of the App Box (every role, plus those of the device already created). */
+/**
+ * The Gladys device of the App Box: every role, always (the roles are fixed,
+ * so a republished device never loses a feature of the one already created).
+ */
 export function buildDevice(gladys, { language }) {
   const ids = appBoxIds(gladys);
   return {

@@ -974,7 +974,9 @@ export class ToloApp {
     w.timer = this.timers.setTimeout(() => {
       w.timer = undefined;
       if (generation === this.generation && this.sessionWatch === w) {
-        this.endRead(w, generation);
+        this.endRead(w, generation).catch((err) =>
+          this.logger.warn(`TOLO: end read of the session failed (${err.message})`),
+        );
       }
     }, wait);
   }
@@ -1055,7 +1057,9 @@ export class ToloApp {
       return;
     }
     if (this.mono() >= w.end + TIMINGS.sessionWatchMargin) {
-      this.sessionStop(w, this.generation, T.sessionOverrun);
+      this.sessionStop(w, this.generation, T.sessionOverrun).catch((err) =>
+        this.logger.warn(`TOLO: turn off of the session failed (${err.message})`),
+      );
       return;
     }
     if (!this.heldToSession(status, w)) {
@@ -1086,7 +1090,9 @@ export class ToloApp {
       this.clearWatch();
       return;
     }
-    this.sessionStop(w, generation, T.sessionOverrun);
+    this.sessionStop(w, generation, T.sessionOverrun).catch((err) =>
+      this.logger.warn(`TOLO: turn off of the session failed (${err.message})`),
+    );
   }
 
   /**

@@ -40,7 +40,7 @@ test('W1: an App Box still on after the planned end gets a dedicated read and is
   assert.equal(box.status[0], 1, 'on during the session');
   await ctx.advance(4 * MINUTE, 1000);
   assert.equal(box.status[0], 0, 'turned off after the planned end + margin');
-  assert.match(ctx.status().message.fr, /encore en marche après sa fin prévue/);
+  assert.match(ctx.status().message.fr, /ou non lue, après la fin prévue/);
 });
 
 test('W2: a timer removed at the panel is set again to what is LEFT, never extended', async (t) => {
@@ -129,7 +129,7 @@ test('5: a setpoint that turns the App Box on: turned off at once, refused', asy
 test('a watch restored after its end (container down then): read at the start, turned off', async (t) => {
   const store = memoryStore({
     lastAttemptAt: NOW,
-    session: { host: '192.168.1.50', minutes: 30, endAt: NOW - 10 * MINUTE },
+    session: { host: '192.168.1.50', minutes: 30, endAt: NOW - 5 * MINUTE },
   });
   const box = fakeAppBox({ neverStops: true });
   box.status[0] = 1;

@@ -16,7 +16,7 @@
 // -----------------------------------------------------------------------------
 
 import { readFile, rename, writeFile } from 'node:fs/promises';
-import { DURATION, HOUR, MINUTE, TIMINGS } from './constants.js';
+import { DURATION, MINUTE, TIMINGS } from './constants.js';
 import { hostOf } from './config.js';
 
 export const STATE_FILE = '/data/tolo-state.json';
@@ -95,16 +95,16 @@ export function normalizeMemory(raw, now) {
             sticky: guard.sticky === true,
           }
         : null,
-    // Kept until well after its end (the container may have been down then:
-    // its end read goes at the start); a planned end never later than the
-    // longest session from now.
+    // Kept until 10 min after its planned end (the container may have been
+    // down then: its end read goes at the start); a planned end never later
+    // than the longest session from now.
     session:
       sessionHost &&
       Number.isInteger(session.minutes) &&
       session.minutes >= 1 &&
       session.minutes <= DURATION.max &&
       Number.isFinite(session.endAt) &&
-      session.endAt > now - HOUR
+      session.endAt > now - 10 * MINUTE
         ? {
             host: sessionHost,
             minutes: session.minutes,

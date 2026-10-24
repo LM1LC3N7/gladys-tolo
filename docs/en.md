@@ -136,7 +136,15 @@ panel; **the integration never extends a session itself**:
 - this watch is kept in `/data`: after a restart it goes on and its end
   read is scheduled again.
 
-A session started elsewhere (App Box, TOLO app) is not watched.
+A session started elsewhere (App Box, TOLO app) is not watched, except in
+these windows.
+
+Limit: the watch ends only on a read showing the App Box off. A session
+started again at the panel (or from the TOLO app) before the integration
+has read the end of the Gladys session (one read interval at most, and up
+to 2 minutes after the planned end), or, after a restart of the
+integration, within 10 minutes after the planned end, is taken for the
+Gladys session: it may be turned off.
 
 ### Setpoint
 

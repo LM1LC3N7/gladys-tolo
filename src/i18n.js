@@ -86,13 +86,13 @@ export const T = {
     ),
   timerStop: (time) =>
     both(
-      `A session started from Gladys was not held to its duration by the timer: turn off sent at ${time} UTC.`,
-      `Une séance lancée depuis Gladys n’était pas tenue à sa durée par la minuterie : extinction envoyée à ${time} UTC.`,
+      `A session started from Gladys (or a session started again since) was not held to its duration by the timer: turn off sent at ${time} UTC.`,
+      `Une séance lancée depuis Gladys (ou une séance relancée depuis) n’était pas tenue à sa durée par la minuterie : extinction envoyée à ${time} UTC.`,
     ),
   sessionOverrun: (time) =>
     both(
-      `A session started from Gladys was still on after its planned end: turn off sent at ${time} UTC.`,
-      `Une séance lancée depuis Gladys était encore en marche après sa fin prévue : extinction envoyée à ${time} UTC.`,
+      `On, or not read, after the planned end of a session started from Gladys (or a session started again since): turn off sent at ${time} UTC.`,
+      `En marche, ou non lue, après la fin prévue d’une séance lancée depuis Gladys (ou une séance relancée depuis) : extinction envoyée à ${time} UTC.`,
     ),
   summary: (status) => {
     const name = statusText(status);

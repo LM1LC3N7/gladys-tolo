@@ -147,7 +147,12 @@ up to date at the end of every milestone.
   the value written), else turn off. A dedicated read at the planned end +
   2 min turns off an App Box still on, or unread (protective). The turn
   on's own ack needs 1 to `session_minutes`. Sessions started elsewhere
-  are not watched.
+  are not watched, except (review r3) one started again at the panel
+  before the integration read the end of the Gladys session (one interval
+  at most, up to 2 min after the planned end), or within 10 min after the
+  planned end after a restart (/data keeps the watch that long): it is
+  taken for the Gladys session and may be turned off (protective,
+  documented).
 - **Turn off presses on any value** (review r1): a scene or an "everything
   off" may send 0 or true; turning on still takes exactly 1.
 - **Setpoint during a turn off guard**: only lower than the setpoint known.

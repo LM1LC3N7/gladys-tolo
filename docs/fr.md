@@ -151,7 +151,14 @@ séance** :
   reprend et sa lecture de fin est reprogrammée.
 
 Une séance lancée ailleurs (App Box, application TOLO) n'est pas
-surveillée.
+surveillée, sauf dans ces fenêtres.
+
+Limite : la surveillance ne s'arrête que sur une lecture qui montre l'App
+Box éteinte. Une séance relancée au panneau (ou depuis l'application TOLO)
+avant que l'intégration ait lu la fin de la séance Gladys (au plus un
+intervalle de lecture, et jusqu'à 2 minutes après la fin prévue), ou, après
+un redémarrage de l'intégration, dans les 10 minutes qui suivent la fin
+prévue, est traitée comme la séance Gladys : elle peut être éteinte.
 
 ### Consigne
 

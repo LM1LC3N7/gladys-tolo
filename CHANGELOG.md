@@ -10,6 +10,8 @@ the notes of the version's GitHub Release.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-10-24
+
 ### Added
 
 - TOLO steam generators and saunas (App Box) on the local network, in UDP
@@ -30,4 +32,5 @@ the notes of the version's GitHub Release.
   on is followed by a turn off.
 - "Test the connection" button; documentation in English and French.
 
-[Unreleased]: https://github.com/LM1LC3N7/gladys-tolo/commits/main
+[Unreleased]: https://github.com/LM1LC3N7/gladys-tolo/compare/v0.1.1...HEAD
+[0.1.1]: https://github.com/LM1LC3N7/gladys-tolo/releases/tag/v0.1.1

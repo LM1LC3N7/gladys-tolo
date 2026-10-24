@@ -1,6 +1,6 @@
 {
   "name": "gladys-tolo",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Gladys Assistant external integration for TOLO steam generators and saunas (App Box) on the local network (UDP): temperature, humidity, setpoint, timer; turn off always available, heating off by default. Unofficial, not affiliated with TOLO.",
   "type": "module",

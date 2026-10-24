@@ -118,7 +118,11 @@ test('states: never undefined nor NaN; off means no time left', () => {
 
 test('/data read back is repaired and bounded', () => {
   const now = 1_000_000;
-  assert.deepEqual(normalizeMemory('junk', now), { lastAttemptAt: null, stopGuard: null });
+  assert.deepEqual(normalizeMemory('junk', now), {
+    lastAttemptAt: null,
+    stopGuard: null,
+    session: null,
+  });
   const m = normalizeMemory(
     {
       lastAttemptAt: now + 999,

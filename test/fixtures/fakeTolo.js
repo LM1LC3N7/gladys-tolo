@@ -40,7 +40,10 @@ export function frame(code, value, extra) {
  * EHOSTUNREACH), `icmp` (each datagram is answered by a socket error,
  * ECONNREFUSED, as a closed port), `timerIgnored` (the power on runs
  * without a timer, whatever the settings), `lampPowersOn` (a lamp or fan
- * set also turns the App Box on), `junkFirst` (before each answer, a
+ * set also turns the App Box on), `setpointPowersOn` (same for a setpoint),
+ * `timerZero` (the power on shows a timer of 0 that never counts, and never
+ * stops), `neverStops` (the timer counts down to 0 but the App Box stays
+ * on), `junkFirst` (before each answer, a
  * datagram from another port and a malformed one), `answerFrom` (another
  * source address).
  */
@@ -66,6 +69,11 @@ export function fakeAppBox(over = {}) {
     applies: true,
     icmp: false,
     timerIgnored: false,
+    timerZero: false,
+    neverStops: false,
+    setpointPowersOn: false,
+    /** When the running timer ends (wall clock of the mocked Date), else undefined. */
+    endAt: undefined,
     lampPowersOn: false,
     down: false,
     junkFirst: false,
@@ -74,6 +82,27 @@ export function fakeAppBox(over = {}) {
     log: [],
     sockets: 0,
     ...over,
+  };
+  /** The running timer counts down; at its end the App Box stops (unless `neverStops`). */
+  box.tick = () => {
+    if (status[0] !== 1 || box.endAt === undefined) {
+      return;
+    }
+    const left = Math.ceil((box.endAt - Date.now()) / 60_000);
+    if (left > 0) {
+      status[2] = left;
+    } else if (box.neverStops) {
+      status[2] = 0;
+    } else {
+      status[0] = 0;
+      status[2] = 61;
+      box.endAt = undefined;
+    }
+  };
+  /** Someone removes the timer at the panel. */
+  box.panelNoTimer = () => {
+    box.endAt = undefined;
+    status[2] = 61;
   };
   box.commands = () =>
     box.log
@@ -91,8 +120,11 @@ export function fakeAppBox(over = {}) {
       case COMMAND.SET_POWER_ON:
         status[0] = value;
         status[3] = (status[3] & ~3) | (value ? 0 : 1);
-        if (value) {
-          status[2] = settings[1] === 0xff || box.timerIgnored ? 61 : settings[1];
+        box.endAt = undefined;
+        if (value && box.timerZero) {
+          status[2] = 0;
+        } else if (value && settings[1] !== 0xff && !box.timerIgnored) {
+          box.endAt = Date.now() + settings[1] * 60_000;
         } else {
           status[2] = 61;
         }
@@ -100,12 +132,15 @@ export function fakeAppBox(over = {}) {
       case COMMAND.SET_POWER_TIMER:
         // As tololib's simulator: the status timer follows (unless ignored).
         settings[1] = value;
-        if (!box.timerIgnored && status[0] === 1) {
-          status[2] = value;
+        if (!box.timerIgnored && !box.timerZero && status[0] === 1) {
+          box.endAt = Date.now() + value * 60_000;
         }
         break;
       case COMMAND.SET_TARGET_TEMPERATURE:
         settings[0] = value;
+        if (box.setpointPowersOn) {
+          apply(COMMAND.SET_POWER_ON, 1);
+        }
         break;
       case COMMAND.SET_LAMP_ON:
         status[7] = value;
@@ -125,6 +160,7 @@ export function fakeAppBox(over = {}) {
 
   const answer = (message) => {
     if (message.code === COMMAND.GET_STATUS) {
+      box.tick();
       return frame(message.code, 0x11, [...status]);
     }
     if (message.code === COMMAND.GET_SETTINGS) {

@@ -86,8 +86,13 @@ export const T = {
     ),
   timerStop: (time) =>
     both(
-      `A session started from Gladys ran without a confirmed timer: turn off sent at ${time} UTC.`,
-      `Une séance lancée depuis Gladys tournait sans minuterie confirmée : extinction envoyée à ${time} UTC.`,
+      `A session started from Gladys was not held to its duration by the timer: turn off sent at ${time} UTC.`,
+      `Une séance lancée depuis Gladys n’était pas tenue à sa durée par la minuterie : extinction envoyée à ${time} UTC.`,
+    ),
+  sessionOverrun: (time) =>
+    both(
+      `A session started from Gladys was still on after its planned end: turn off sent at ${time} UTC.`,
+      `Une séance lancée depuis Gladys était encore en marche après sa fin prévue : extinction envoyée à ${time} UTC.`,
     ),
   summary: (status) => {
     const name = statusText(status);
@@ -154,8 +159,8 @@ export const ERRORS = {
   ),
   timerUnconfirmed: (what) =>
     both(
-      `Turned on, timer not confirmed (${what.en}): the integration sets it again, and turns the App Box off if it is still missing.`,
-      `Allumée, minuterie non confirmée (${what.fr}) : l’intégration la règle à nouveau, et éteint l’App Box si elle manque toujours.`,
+      `Turned on, timer not confirmed (${what.en}): the integration sets it again to what is left of the session, and turns the App Box off if it is still not confirmed.`,
+      `Allumée, minuterie non confirmée (${what.fr}) : l’intégration la règle à nouveau sur le reste de la séance, et éteint l’App Box si elle n’est toujours pas confirmée.`,
     ),
   refusedButReads: (what) =>
     both(
@@ -215,6 +220,7 @@ export const ERRORS = {
       : both(`timer ${minutes ?? '?'} min`, `minuterie ${minutes ?? '?'} min`),
   LAMP: both('lamp', 'lampe'),
   FAN: both('fan', 'ventilateur'),
+  SETPOINT: both('setpoint', 'de consigne'),
   noReadBack: both('no read back', 'pas de relecture'),
   readBack: (what) => both(`the App Box reads: ${what.en}`, `l’App Box indique : ${what.fr}`),
 };

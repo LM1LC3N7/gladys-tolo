@@ -41,7 +41,7 @@ src/devices.js                    device and states (pure); feature roles are fr
 src/tolo/protocol.js              frames, requests, strict parsing (pure), port of tololib
 src/tolo/client.js                status, settings, sets: one exchange each
 src/tolo/udp.js                   the only network access: one UDP socket per exchange
-src/store.js                      /data/tolo-state.json: last read time, turn off guard
+src/store.js                      /data/tolo-state.json: last read time, turn off guard, session watch
 src/publisher.js                  states to Gladys within 300 per minute
 src/config.js                     DEFAULT_CONFIG (mirrors the manifest defaults) + normalization
 src/i18n.js                       English and French runtime texts
@@ -81,7 +81,9 @@ test/                             node --test, against the SDK's fake Gladys (in
   timer", 60 min at most) and caps the setpoint (`max_temperature`, 60 °C at
   most) before it, both read back; the option, a turn off and the deadline
   are checked again right before every datagram; it is confirmed only with
-  the timer read back, and a Gladys session without it is turned off.
+  the timer read back; a Gladys session is held to its duration (the timer
+  set again to what is left, never more; turned off when it cannot be, and
+  at its planned end), the watch kept in `/data`.
   Turning off (any value presses it) is never held
   back (option, command in flight, read, unreachable App Box, before the
   first read), never preceded by a read, sent again when a turn on may land

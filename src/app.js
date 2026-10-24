@@ -155,6 +155,7 @@ export class ToloApp {
       );
     }
     this.restoreStopGuard();
+    this.restoreWatch();
     this.box = freshBox();
     this.published = undefined;
     this.badge = undefined;
@@ -205,6 +206,10 @@ export class ToloApp {
   stop() {
     this.generation += 1;
     this.clearTimer();
+    if (this.sessionWatch?.timer) {
+      this.timers.clearTimeout(this.sessionWatch.timer);
+      this.sessionWatch.timer = undefined;
+    }
     for (const handle of this.box.followUps) {
       this.timers.clearTimeout(handle);
     }
@@ -751,13 +756,10 @@ export class ToloApp {
     this.publishAll().catch((err) => this.logger.warn(`Publishing failed: ${err.message}`));
   }
 
-  /**
-   * A timer that bounds a session of `minutes`: a whole number of minutes
-   * left, 1 to `minutes` (0 too, with `ending`: a timer running out).
-   */
-  static timerBounds(status, minutes, { ending = false } = {}) {
+  /** A timer that bounds a session of `minutes` just started: 1 to `minutes` minutes left. */
+  static timerBounds(status, minutes) {
     const left = status.powerTimer;
-    return Number.isInteger(left) && left >= (ending ? 0 : 1) && left <= minutes;
+    return Number.isInteger(left) && left >= 1 && left <= minutes;
   }
 
   async sendHeat(host, received, generation, entry) {
@@ -852,7 +854,7 @@ export class ToloApp {
       if (!accepted && after.powerOn === false) {
         // Refused, and read off: nothing to guard nor to watch.
         this.unconfirmedStartUntil = -Infinity;
-        this.sessionWatch = undefined;
+        this.clearWatch();
         throw this.refusal(ERRORS.refused);
       }
       throw this.refusal(ERRORS.sentUnconfirmed(ERRORS.readBack(statusText(after))));
@@ -950,42 +952,150 @@ export class ToloApp {
 
   // --- Session timer -------------------------------------------------------------
 
-  /** A power on left from Gladys: its session is watched until its end. */
+  /**
+   * A power on left from Gladys: its session is held to its duration until
+   * it is seen off. Kept in /data (wall-clock end) and given a dedicated
+   * read at its planned end + margin.
+   */
   watchSession(host) {
     const minutes = this.config.sessionMinutes;
-    this.sessionWatch = {
-      host,
-      minutes,
-      until: this.mono() + minutes * MINUTE + TIMINGS.sessionWatchMargin,
-      enforcing: false,
-    };
+    const startedAt = this.mono();
+    this.setWatch({ host, minutes, startedAt, end: startedAt + minutes * MINUTE });
   }
 
-  /** A status read through the session watch: on without a bounding timer -> enforce. */
+  /** Installs a session watch (new or restored), persists it, schedules its end read. */
+  setWatch({ host, minutes, startedAt, end }) {
+    this.clearWatch({ persist: false });
+    const w = { host, minutes, startedAt, end, enforcing: false, timer: undefined };
+    this.sessionWatch = w;
+    this.persistWatch();
+    const generation = this.generation;
+    const wait = Math.max(TIMINGS.guardRead, end + TIMINGS.sessionWatchMargin - this.mono());
+    w.timer = this.timers.setTimeout(() => {
+      w.timer = undefined;
+      if (generation === this.generation && this.sessionWatch === w) {
+        this.endRead(w, generation);
+      }
+    }, wait);
+  }
+
+  clearWatch({ persist = true } = {}) {
+    const w = this.sessionWatch;
+    if (w?.timer) {
+      this.timers.clearTimeout(w.timer);
+    }
+    this.sessionWatch = undefined;
+    if (persist && w) {
+      this.persistWatch();
+    }
+  }
+
+  /** The watch into /data (wall clock), in the background. */
+  persistWatch() {
+    const w = this.sessionWatch;
+    this.memory.session = w
+      ? { host: w.host, minutes: w.minutes, endAt: this.now() + (w.end - this.mono()) }
+      : null;
+    this.saveMemory().catch(() => {});
+  }
+
+  /** The watch kept in /data for the configured address, back in memory (end read rescheduled). */
+  restoreWatch() {
+    const kept = this.memory.session;
+    if (!kept || kept.host !== this.config.host) {
+      this.clearWatch({ persist: false });
+      return;
+    }
+    const end = this.mono() + (kept.endAt - this.now());
+    this.setWatch({
+      host: kept.host,
+      minutes: kept.minutes,
+      startedAt: end - kept.minutes * MINUTE,
+      end,
+    });
+  }
+
+  /** Whole minutes left in the watched session (0 once its planned end is passed). */
+  minutesLeft(w) {
+    return Math.max(0, Math.ceil((w.end - this.mono()) / MINUTE));
+  }
+
+  /**
+   * Whether a status read on shows the session held to its duration: a
+   * timer of 1 minute to what is left of the session (+1 for the rounding),
+   * or 0 only in the last minute of the planned session.
+   */
+  heldToSession(status, w) {
+    const left = status.powerTimer;
+    if (!Number.isInteger(left)) {
+      return false;
+    }
+    if (left === 0) {
+      return this.mono() - w.startedAt >= w.minutes * MINUTE - MINUTE;
+    }
+    return left >= 1 && left <= Math.min(w.minutes, this.minutesLeft(w) + 1);
+  }
+
+  /** A status read through the session watch. */
   watchRead(status) {
     const w = this.sessionWatch;
     if (!w) {
       return;
     }
-    if (this.mono() >= w.until || w.host !== this.config.host) {
-      this.sessionWatch = undefined;
+    if (w.host !== this.config.host) {
+      this.clearWatch();
       return;
     }
     if (status.powerOn === false && !this.startMayLand) {
       // The session is over.
-      this.sessionWatch = undefined;
+      this.clearWatch();
       return;
     }
-    if (status.powerOn === true && !ToloApp.timerBounds(status, w.minutes, { ending: true })) {
+    if (status.powerOn !== true) {
+      return;
+    }
+    if (this.mono() >= w.end + TIMINGS.sessionWatchMargin) {
+      this.sessionStop(w, this.generation, T.sessionOverrun);
+      return;
+    }
+    if (!this.heldToSession(status, w)) {
       this.enforceTimer(w, this.generation);
     }
   }
 
   /**
-   * A session started from Gladys runs without a timer of at most its
-   * duration: the timer is written again (it bounds, so it is allowed while
-   * on), then read; still missing, the App Box is turned off, logged and
-   * said in the status. One at a time; never awaited by an ack.
+   * The dedicated read at the planned end + margin: still on, it is turned
+   * off. A read that fails sends the turn off too (protective, never a
+   * silent end of the watch).
+   */
+  async endRead(w, generation) {
+    let status;
+    try {
+      status = await this.client.status(w.host, {
+        attempts: TIMINGS.readAttempts,
+        attemptTimeout: TIMINGS.readAttemptTimeout,
+      });
+    } catch {
+      status = undefined;
+    }
+    if (generation !== this.generation || this.sessionWatch !== w) {
+      return;
+    }
+    if (status?.powerOn === false && !this.startMayLand) {
+      this.show(generation, status);
+      this.clearWatch();
+      return;
+    }
+    this.sessionStop(w, generation, T.sessionOverrun);
+  }
+
+  /**
+   * A session started from Gladys runs without a timer that holds it to its
+   * duration: the timer is written with what is LEFT of the session (never
+   * more: the integration never extends a session), then read strictly; a
+   * timer still not within 1 minute to the value written, or a planned end
+   * already passed, turns the App Box off. One at a time; never awaited by
+   * an ack.
    */
   enforceTimer(w, generation) {
     if (w.enforcing) {
@@ -994,10 +1104,16 @@ export class ToloApp {
     w.enforcing = true;
     const host = w.host;
     const run = async () => {
-      this.logger.warn('TOLO: a session started from Gladys has no confirmed timer, set again');
-      let bounded;
+      const left = this.minutesLeft(w);
+      if (left < 1) {
+        await this.sessionStop(w, generation, T.timerStop);
+        return;
+      }
+      this.logger.warn(
+        `TOLO: a session started from Gladys is not held to its end, timer ${left} min`,
+      );
       try {
-        await this.client.set(host, 'timer', w.minutes, {
+        await this.client.set(host, 'timer', left, {
           attempts: TIMINGS.commandAttempts,
           attemptTimeout: TIMINGS.commandAttemptTimeout,
           beforeSend: () => {
@@ -1007,42 +1123,86 @@ export class ToloApp {
       } catch {
         // The read decides.
       }
+      let held;
       try {
         const after = await this.client.status(host, {
           attempts: TIMINGS.commandAttempts,
           attemptTimeout: TIMINGS.commandAttemptTimeout,
         });
-        bounded =
-          after.powerOn === false || ToloApp.timerBounds(after, w.minutes, { ending: true });
+        held =
+          after.powerOn === false ||
+          (Number.isInteger(after.powerTimer) && after.powerTimer >= 1 && after.powerTimer <= left);
       } catch {
-        bounded = false;
+        held = false;
       }
-      if (bounded || this.sessionWatch !== w) {
+      if (held || this.sessionWatch !== w) {
         return;
       }
-      this.logger.warn('TOLO: still no timer on a session started from Gladys, turn off');
-      this.sessionWatch = undefined;
-      this.alert = T.timerStop(new Date(this.now()).toISOString().slice(11, 16));
-      // A turn on not sent yet gives way, like any turn off.
-      this.protectSeq += 1;
-      const sentAt = this.mono();
-      this.lastSentAt = sentAt;
-      this.guardStop(sentAt, { host });
-      try {
-        await this.sendStop(host);
-      } catch (err) {
-        this.logger.warn(`TOLO: turn off after the timer check failed (${reasonOf(err).en})`);
-      }
-      if (generation === this.generation) {
-        this.followUp();
-        this.updateStatus().catch(() => {});
-      }
+      await this.sessionStop(w, generation, T.timerStop);
     };
     run()
       .catch(() => {})
       .finally(() => {
         w.enforcing = false;
       });
+  }
+
+  /** Turns a watched session off: guard, log, alert in the status. */
+  async sessionStop(w, generation, alert) {
+    if (this.sessionWatch !== w) {
+      return;
+    }
+    const host = w.host;
+    this.logger.warn('TOLO: a session started from Gladys is not held to its duration, turn off');
+    this.clearWatch();
+    this.alert = alert(new Date(this.now()).toISOString().slice(11, 16));
+    // A turn on not sent yet gives way, like any turn off.
+    this.protectSeq += 1;
+    const sentAt = this.mono();
+    this.lastSentAt = sentAt;
+    this.guardStop(sentAt, { host });
+    try {
+      await this.sendStop(host);
+    } catch (err) {
+      this.logger.warn(`TOLO: turn off of the session failed (${reasonOf(err).en})`);
+    }
+    if (generation === this.generation) {
+      this.followUp();
+      this.updateStatus().catch(() => {});
+    }
+  }
+
+  /**
+   * The power state just before a command that should not heat: the last
+   * read if less than 10 s old, else a fresh read (by 1.5 s); undefined
+   * when unknown (no side effect can then be told).
+   */
+  async powerBefore(host, received) {
+    const b = this.box;
+    if (b.status && this.mono() - b.readAt < TIMINGS.recentRead) {
+      return b.status.powerOn;
+    }
+    const fresh = await this.readBack(host, 'status', received + TIMINGS.heatReadBy);
+    return fresh?.powerOn;
+  }
+
+  /**
+   * A command that should not heat turned the App Box on (off just before,
+   * on just after, no turn on from Gladys in flight): turned off at once.
+   */
+  sideEffect(name, host, before, after) {
+    if (after?.powerOn !== true || before !== false || this.heatEntry || this.startMayLand) {
+      return;
+    }
+    this.logger.warn(`TOLO: the ${name.en} command turned the App Box on, turn off`);
+    this.protectSeq += 1;
+    const sentAt = this.mono();
+    this.lastSentAt = sentAt;
+    this.guardStop(sentAt, { host });
+    this.sendStop(host)
+      .then(() => this.followUp())
+      .catch((err) => this.logger.warn(`TOLO: turn off failed (${reasonOf(err).en})`));
+    throw this.refusal(ERRORS.sideEffect(name));
   }
 
   // --- Turn off ----------------------------------------------------------------
@@ -1286,9 +1446,18 @@ export class ToloApp {
     };
     lastChecks();
     return this.oneAtATime(FEATURES.TARGET, async () => {
+      const before = await this.powerBefore(host, received);
       const accepted = await this.sendSet(host, received, 'target', temperature, lastChecks);
-      const after = await this.readBack(host, 'settings', received + TIMINGS.commandAnswerBy);
+      const answerBy = received + TIMINGS.commandAnswerBy;
+      const [after, status] = await Promise.all([
+        this.readBack(host, 'settings', answerBy),
+        this.readBack(host, 'status', answerBy),
+      ]);
       this.followUp();
+      if (status) {
+        this.show(generation, status);
+        this.sideEffect(ERRORS.SETPOINT, host, before, status);
+      }
       if (after === undefined) {
         throw this.refusal(
           ERRORS.sentUnconfirmed(accepted ? ERRORS.noReadBack : ERRORS.answerRefused),
@@ -1320,7 +1489,7 @@ export class ToloApp {
     const host = this.config.host;
     const name = role === FEATURES.LAMP ? ERRORS.LAMP : ERRORS.FAN;
     return this.oneAtATime(role, async () => {
-      const before = this.box.status?.powerOn;
+      const before = await this.powerBefore(host, received);
       const command = role === FEATURES.LAMP ? 'lamp' : 'fan';
       const accepted = await this.sendSet(host, received, command, on, () => {
         if (generation !== this.generation || host !== this.config.host) {
@@ -1335,17 +1504,7 @@ export class ToloApp {
         );
       }
       this.show(generation, after);
-      if (after.powerOn === true && before === false && !this.heatEntry && !this.startMayLand) {
-        this.logger.warn(`TOLO: the ${name.en} command turned the App Box on, turn off`);
-        this.protectSeq += 1;
-        const sentAt = this.mono();
-        this.lastSentAt = sentAt;
-        this.guardStop(sentAt, { host });
-        this.sendStop(host)
-          .then(() => this.followUp())
-          .catch((err) => this.logger.warn(`TOLO: turn off failed (${reasonOf(err).en})`));
-        throw this.refusal(ERRORS.sideEffect(name));
-      }
+      this.sideEffect(name, host, before, after);
       const read = role === FEATURES.LAMP ? after.lampOn : after.fanOn;
       if (read !== on) {
         throw this.refusal(

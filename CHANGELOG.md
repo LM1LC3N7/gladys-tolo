@@ -23,8 +23,9 @@ the notes of the version's GitHub Release.
   duration (30 min by default, 60 at most) and caps the setpoint (50 °C by
   default, 60 at most).
 - A turn on is confirmed only when a read shows the timer running; a session
-  started from Gladys found without it gets the timer again, then is turned
-  off.
+  started from Gladys is held to its duration (the timer is set again to what
+  is left, never more), turned off when it cannot be, and read at its planned
+  end, also after a restart.
 - "Turn off" takes any value; a lamp or fan command that turns the App Box
   on is followed by a turn off.
 - "Test the connection" button; documentation in English and French.

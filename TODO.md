@@ -42,6 +42,17 @@ up to date at the end of every milestone.
       answer must echo the value sent. 12 refusal texts fixed (both
       languages, exact causes). 13 a turn on overtaken by a turn off is not
       a success. 14 comment fixed. 15 "4 datagrams at most".
+- [x] **Review r2 fixes** (2026-10-24), tests in `test/review2.test.js`:
+      1 the read after a timer rewrite is strict (1 to the value written),
+      else turn off; a timer at 0 accepted only in the last minute of the
+      session; a dedicated read at the planned end + 2 min turns off an App
+      Box still on (or unread), with guard, log and status. 2 a rewrite
+      writes only what is left of the session (1 min at least), a planned
+      end passed turns off: the integration never extends a session.
+      3 the watch is kept in /data (`session`), restored at the start with
+      its end read. 4 lamp/fan: the state before is a read of less than
+      10 s (a fresh one otherwise). 5 the setpoint reads the status back
+      too: off to on turns it off and refuses.
 - [ ] **Milestone 2 — real App Box**: run against a real App Box (see "To
       check"), turn the frames (anonymized) into fixtures.
 - [ ] **Milestone 3 — more**: discovery through the core
@@ -127,13 +138,16 @@ up to date at the end of every milestone.
   output (not checked); a read showing the App Box turned on by one of
   them (off just before, no turn on from Gladys in flight) turns it off at
   once. One command at a time per role.
-- **Session watch** (review r1): from the first power on datagram of a
-  turn on from Gladys, for `session_minutes` + 2 min, every status read
-  needs the power off, or a timer of 0 to `session_minutes` minutes (0: a
-  timer running out); otherwise the timer is written again and read, then
-  the App Box is turned off (a guard, the status says it). The turn on's
-  own ack needs 1 to `session_minutes`. Sessions started elsewhere are not
-  watched.
+- **Session watch** (reviews r1, r2): from the first power on datagram of
+  a turn on from Gladys until a read shows it off, kept in /data
+  (`session`: address, minutes, planned end, wall clock). Every status read
+  on needs a timer of 1 to min(`session_minutes`, minutes left + 1), or 0
+  in the last minute only; otherwise the timer is written with the minutes
+  LEFT (never more; planned end passed: turn off) and read strictly (1 to
+  the value written), else turn off. A dedicated read at the planned end +
+  2 min turns off an App Box still on, or unread (protective). The turn
+  on's own ack needs 1 to `session_minutes`. Sessions started elsewhere
+  are not watched.
 - **Turn off presses on any value** (review r1): a scene or an "everything
   off" may send 0 or true; turning on still takes exactly 1.
 - **Setpoint during a turn off guard**: only lower than the setpoint known.

@@ -120,11 +120,23 @@ Answers after the power on (always followed by a read):
 - "Sent, without confirmation": no answer, no read back, or read off.
 
 **Timer (not checked on a real device).** According to tololib, the App Box
-stops by itself at the end of its timer. During every session started from
-Gladys (its duration plus 2 minutes), each read checks that a timer of at
-most the session duration runs; otherwise the timer is written again, then
-the App Box is turned off if it is still missing. A session started
-elsewhere (App Box, TOLO app) is not watched.
+stops by itself at the end of its timer. A session started from Gladys is
+held to its duration, also when the timer is changed or removed at the
+panel; **the integration never extends a session itself**:
+
+- every read of the session checks that a timer of 1 minute to what is
+  left of the session runs (0 is accepted only in its last minute);
+- otherwise the timer is written again with **what is left** of the
+  session (1 min at least; planned end passed: turned off directly), then
+  read strictly (1 minute to the value written); otherwise the App Box is
+  turned off;
+- a dedicated read goes at the planned end + 2 minutes: still on (or no
+  read), the App Box is turned off, with a guard, a log line and a message
+  in the status;
+- this watch is kept in `/data`: after a restart it goes on and its end
+  read is scheduled again.
+
+A session started elsewhere (App Box, TOLO app) is not watched.
 
 ### Setpoint
 
@@ -133,16 +145,19 @@ Refused when the option is off, when the value is not a whole number from
 when another setpoint is in progress, when the configuration changed
 meanwhile, when it cannot leave within 3.5 s, or, while a turn off is in
 flight or not confirmed, when it is not lower than the setpoint known.
-According to tololib, changing the setpoint does not turn the App Box on.
-Confirmed by a read of the settings.
+According to tololib, changing the setpoint does not turn the App Box on;
+the power state is read after it, and should the App Box have gone from off
+to on (no turn on from Gladys in progress), it is turned off at once and the
+setpoint refused. Confirmed by a read of the settings.
 
 ### Lamp and fan
 
 Plain on/off (0 or 1), one command at a time each, confirmed by a read.
 According to tololib, the lamp and the fan only drive their output (not
 checked on a real App Box); should a lamp or fan command turn the App Box
-on (read off right before, on right after), the integration turns it off at
-once and refuses the command.
+on (off on a read of less than 10 s, made right before when needed, and on
+right after), the integration turns it off at once and refuses the
+command.
 
 ## Troubleshooting
 
@@ -168,8 +183,9 @@ once and refuses the command.
 ## Data
 
 `/data/tolo-state.json` holds only the time of the last read and the guard
-of a turn off in progress (App Box address, end time, number of resends).
-No secret exists in this integration.
+of a turn off in progress (App Box address, end time, number of resends),
+and the watch of a session started from Gladys (App Box address, duration,
+planned end). No secret exists in this integration.
 
 Based on the tololib Python library (MIT, Matthias Lohr), ported to
 JavaScript: see `THIRD_PARTY_NOTICES.md`.

@@ -26,7 +26,7 @@ test('1. a turn on whose session runs without a timer: not a success, timer set 
   assert.ok(box.commands().filter((c) => c === `${COMMAND.SET_POWER_TIMER}:30`).length >= 2);
   assert.ok(box.powerOffs().length >= 1, 'turned off');
   assert.equal(box.status[0], 0);
-  assert.match(ctx.status().message.fr, /sans minuterie confirmée/);
+  assert.match(ctx.status().message.fr, /pas tenue à sa durée/);
 });
 
 test('1. a turn on with a bounding timer is confirmed', async (t) => {
@@ -41,7 +41,7 @@ test('1. a later read showing the timer gone during a Gladys session: set again,
   assert.equal((await ctx.press('heat-on')).success, true);
   // Someone removes the timer on the App Box, and it ignores new ones.
   ctx.box.timerIgnored = true;
-  ctx.box.status[2] = 61;
+  ctx.box.panelNoTimer();
   await ctx.advance(30 * SECOND, 100);
   assert.ok(ctx.box.powerOffs().length >= 1);
 });

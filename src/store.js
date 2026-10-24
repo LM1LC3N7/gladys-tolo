@@ -3,6 +3,9 @@
 // container):
 //   - the time of the last read (written at most once a minute, BEFORE the
 //     read), so a restart never reads sooner than the interval;
+//   - the watch of a session started from Gladys (address, duration, planned
+//     end): after a restart, it is still held to its duration and still
+//     gets its read at the planned end;
 //   - the guard of a turn off that heating may still overtake (a turn on
 //     sent before it, or a turn off without confirmation): after a restart,
 //     the reads of its remaining time still send the turn off again if the
@@ -13,7 +16,7 @@
 // -----------------------------------------------------------------------------
 
 import { readFile, rename, writeFile } from 'node:fs/promises';
-import { TIMINGS } from './constants.js';
+import { DURATION, HOUR, MINUTE, TIMINGS } from './constants.js';
 import { hostOf } from './config.js';
 
 export const STATE_FILE = '/data/tolo-state.json';
@@ -64,12 +67,15 @@ const object = (value) =>
 /**
  * The persisted state, repaired and bounded (wall-clock times):
  * `{ lastAttemptAt: number | null,
- *    stopGuard: { host, until, reasserts, sticky } | null }`.
+ *    stopGuard: { host, until, reasserts, sticky } | null,
+ *    session: { host, minutes, endAt } | null }`.
  */
 export function normalizeMemory(raw, now) {
   const data = object(raw);
   const guard = object(data.stopGuard);
   const host = hostOf(guard.host);
+  const session = object(data.session);
+  const sessionHost = hostOf(session.host);
   return {
     // A time in the future (a clock set back) counts as now: never a longer wait than the interval.
     lastAttemptAt:
@@ -87,6 +93,22 @@ export function normalizeMemory(raw, now) {
                 ? Math.min(guard.reasserts, TIMINGS.stopReasserts)
                 : 0,
             sticky: guard.sticky === true,
+          }
+        : null,
+    // Kept until well after its end (the container may have been down then:
+    // its end read goes at the start); a planned end never later than the
+    // longest session from now.
+    session:
+      sessionHost &&
+      Number.isInteger(session.minutes) &&
+      session.minutes >= 1 &&
+      session.minutes <= DURATION.max &&
+      Number.isFinite(session.endAt) &&
+      session.endAt > now - HOUR
+        ? {
+            host: sessionHost,
+            minutes: session.minutes,
+            endAt: Math.min(session.endAt, now + session.minutes * MINUTE),
           }
         : null,
   };

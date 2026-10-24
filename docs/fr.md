@@ -132,11 +132,26 @@ Réponses après la mise en marche (toujours suivie d'une relecture) :
   relue éteinte.
 
 **Minuterie (non vérifié sur un vrai appareil).** D'après tololib, l'App Box
-s'arrête d'elle-même à la fin de sa minuterie. Pendant toute séance lancée
-depuis Gladys (sa durée plus 2 minutes), chaque lecture vérifie qu'une
-minuterie d'au plus la durée de séance tourne ; sinon la minuterie est
-réécrite, puis l'App Box est éteinte si elle manque toujours. Une séance
-lancée ailleurs (App Box, application TOLO) n'est pas surveillée.
+s'arrête d'elle-même à la fin de sa minuterie. Une séance lancée depuis
+Gladys est tenue à sa durée, y compris quand la minuterie est changée ou
+retirée au panneau ; **l'intégration ne prolonge jamais elle-même une
+séance** :
+
+- chaque lecture de la séance vérifie qu'une minuterie de 1 minute à ce
+  qui reste de la séance tourne (0 n'est accepté que dans sa dernière
+  minute) ;
+- sinon la minuterie est réécrite avec **ce qui reste** de la séance (au
+  moins 1 min ; fin prévue passée : extinction directe), puis relue
+  strictement (de 1 minute à la valeur écrite) ; sinon l'App Box est
+  éteinte ;
+- une lecture dédiée part à la fin prévue + 2 minutes : encore en marche
+  (ou lecture impossible), l'App Box est éteinte, avec garde, journal et
+  message dans le statut ;
+- cette surveillance est gardée dans `/data` : après un redémarrage, elle
+  reprend et sa lecture de fin est reprogrammée.
+
+Une séance lancée ailleurs (App Box, application TOLO) n'est pas
+surveillée.
 
 ### Consigne
 
@@ -145,17 +160,19 @@ de 35 °C à la consigne la plus haute (revérifié juste avant le paquet), si
 une autre consigne est en cours, si la configuration a changé entre-temps,
 si elle ne peut pas partir dans les 3,5 s, ou, pendant une extinction en
 cours ou non confirmée, si elle n'est pas plus basse que la consigne connue.
-D'après tololib, changer la consigne n'allume pas l'App Box. Confirmée par
-une relecture des réglages.
+D'après tololib, changer la consigne n'allume pas l'App Box ; l'état de
+marche est relu après elle, et si l'App Box est passée d'éteinte à en marche
+(sans allumage Gladys en cours), elle est éteinte aussitôt et la consigne
+refusée. Confirmée par une relecture des réglages.
 
 ### Lampe et ventilateur
 
 Marche/arrêt simples (0 ou 1), une commande à la fois pour chacun,
 confirmés par une relecture. D'après tololib, la lampe et le ventilateur ne
 commandent que leur sortie (non vérifié sur une vraie App Box) ; si une
-commande lampe ou ventilateur met l'App Box en marche (relue éteinte juste
-avant, en marche juste après), l'intégration l'éteint aussitôt et refuse la
-commande.
+commande lampe ou ventilateur met l'App Box en marche (éteinte d'après une
+lecture de moins de 10 s, faite juste avant si besoin, et en marche juste
+après), l'intégration l'éteint aussitôt et refuse la commande.
 
 ## Quand ça ne va pas
 
@@ -184,7 +201,8 @@ commande.
 
 `/data/tolo-state.json` contient seulement l'heure de la dernière lecture et
 la garde d'une extinction en cours (adresse de l'App Box, échéance, nombre de
-renvois). Aucun secret n'existe dans cette intégration.
+renvois), et la surveillance d'une séance lancée depuis Gladys (adresse de
+l'App Box, durée, fin prévue). Aucun secret n'existe dans cette intégration.
 
 Basée sur la bibliothèque Python tololib (MIT, Matthias Lohr), portée en
 JavaScript : voir `THIRD_PARTY_NOTICES.md`.

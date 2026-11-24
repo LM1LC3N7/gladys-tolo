@@ -91,13 +91,14 @@ test('3: the session watch is kept in /data and survives a restart', async (t) =
   assert.equal(store.data.session.host, '192.168.1.50');
   assert.equal(store.data.session.minutes, 10);
   // A restart: a new app on the same /data, the session still on.
+  const restartAt = Date.now(); // the mocked clock, not today's
   ctx.app.stop();
   t.mock.timers.reset();
   const later = await setup(t, {
     config: { ...HEAT_CFG, session_minutes: 10, poll_interval: 3600 },
     box,
     store,
-    now: Date.now(),
+    now: restartAt,
     create: false,
   });
   await later.advance(14 * MINUTE, 1000);
